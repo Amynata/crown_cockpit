@@ -36,6 +36,7 @@ body{margin:0;background:#f2ece0;}
 .sb-btn.primary{background:#c9854a;border-color:#c9854a;color:#2a1a05;font-weight:500;}
 
 .apperr{white-space:pre-wrap;padding:20px;color:#b5462a;font:13px/1.5 monospace;}
+#root.readonly input, #root.readonly textarea, #root.readonly select { pointer-events:none; background:transparent; }
 </style>
 </head>
 <body>
@@ -43,8 +44,7 @@ body{margin:0;background:#f2ece0;}
 <div id="root"></div>
 <script>
 // ============================================================
-//  CONFIG FIREBASE — colle ici la config de ton projet
-//  (Firebase console > Paramètres du projet > Tes applications > Config)
+//  CONFIG FIREBASE
 // ============================================================
 const firebaseConfig = {
   apiKey: "AIzaSyAxCUQmdcSJXue0VcMg9iTqWdSeCDa4O_U",
@@ -60,7 +60,13 @@ const firebaseConfig = {
 (function () {
   var KEY = "crownonme:cockpit:v2";
   var hasConfig = !!(firebaseConfig && firebaseConfig.apiKey);
+  var params = new URLSearchParams(location.search);
+  var readUid = params.get("read");
+  var READONLY = !!readUid;
+  window.__READONLY = READONLY;
+
   var db = null, auth = null, provider = null, authReady = Promise.resolve(null);
+  var ownerValue = null;
 
   if (hasConfig) {
     try {
@@ -69,7 +75,12 @@ const firebaseConfig = {
       db = firebase.firestore();
       provider = new firebase.auth.GoogleAuthProvider();
       authReady = new Promise(function (res) {
-        auth.onAuthStateChanged(function (u) { renderBar(u); res(u); });
+        var first = true;
+        auth.onAuthStateChanged(function (u) {
+          renderBar(u);
+          if (READONLY) startReadMode();
+          if (first) { first = false; res(u); }
+        });
       });
     } catch (e) { console.error("Firebase init:", e); }
   }
@@ -77,8 +88,28 @@ const firebaseConfig = {
   function currentUser() { return (auth && auth.currentUser) ? auth.currentUser : null; }
   function uid() { var u = currentUser(); return u ? u.uid : null; }
 
+  // ---- helpers pour le panneau Partage (propriétaire) ----
+  window.__share = {
+    get enabled() { return hasConfig && !READONLY && !!uid(); },
+    get uid() { return uid(); },
+    get link() { return location.origin + location.pathname + "?read=" + (uid() || ""); },
+    getReaders: async function () {
+      if (!hasConfig || !uid()) return [];
+      try {
+        var snap = await db.collection("cockpit").doc(uid()).get();
+        return (snap.exists && snap.data() && Array.isArray(snap.data().readers)) ? snap.data().readers : [];
+      } catch (e) { return []; }
+    },
+    setReaders: async function (list) {
+      if (!hasConfig || !uid()) return;
+      await db.collection("cockpit").doc(uid()).set({ readers: list }, { merge: true });
+    }
+  };
+
+  // ---- stockage ----
   window.storage = {
     get: async function (key) {
+      if (READONLY) { return ownerValue ? { value: ownerValue } : null; }
       if (hasConfig) {
         await authReady;
         var u = uid();
@@ -88,7 +119,7 @@ const firebaseConfig = {
             var snap = await ref.get();
             if (snap.exists && snap.data() && typeof snap.data().value === "string") return { value: snap.data().value };
             var local = localStorage.getItem(key);
-            if (local) { await ref.set({ value: local, updatedAt: Date.now() }); return { value: local }; }
+            if (local) { await ref.set({ value: local, updatedAt: Date.now() }, { merge: true }); return { value: local }; }
             return null;
           } catch (e) { console.error("Firestore get:", e); }
         }
@@ -97,15 +128,40 @@ const firebaseConfig = {
       return v ? { value: v } : null;
     },
     set: async function (key, value) {
+      if (READONLY) return { ok: true };
       try { localStorage.setItem(key, value); } catch (e) {}
       var u = uid();
       if (hasConfig && u) {
-        try { await db.collection("cockpit").doc(u).set({ value: value, updatedAt: Date.now() }); }
+        try { await db.collection("cockpit").doc(u).set({ value: value, updatedAt: Date.now() }, { merge: true }); }
         catch (e) { console.error("Firestore set:", e); }
       }
       return { ok: true };
     }
   };
+
+  // ---- mode lecture seule ----
+  function showReadMsg(msg) {
+    var r = document.getElementById("root");
+    if (r) r.innerHTML = '<div style="padding:28px;font:15px/1.7 system-ui,sans-serif;color:#0d0d0b;max-width:640px;">\\uD83D\\uDC41 <b>Lecture seule</b><br><br>' + msg + '</div>';
+  }
+  var readStarted = false;
+  async function startReadMode() {
+    await authReady;
+    var u = currentUser();
+    if (!u) { showReadMsg("Connecte-toi avec Google (bouton en haut à droite) pour voir ce cockpit partagé."); return; }
+    if (readStarted) return; readStarted = true;
+    try {
+      var snap = await db.collection("cockpit").doc(readUid).get();
+      if (!snap.exists) { showReadMsg("Ce cockpit partagé est introuvable."); return; }
+      ownerValue = (snap.data() && typeof snap.data().value === "string") ? snap.data().value : null;
+      var rootEl = document.getElementById("root");
+      if (rootEl) rootEl.classList.add("readonly");
+      if (typeof window.__runApp === "function") window.__runApp();
+    } catch (e) {
+      readStarted = false;
+      showReadMsg("Accès non autorisé. Demande à la propriétaire d'ajouter ton e-mail (<b>" + (u.email || "") + "</b>) à la liste de partage.");
+    }
+  }
 
   function el(tag, cls, txt) { var e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
 
@@ -116,9 +172,17 @@ const firebaseConfig = {
     var left = el("div", "sb-left");
     var dot = el("span", "sb-dot");
     var status = el("span", "sb-status");
-    if (!hasConfig) { dot.classList.add("local"); status.textContent = "Local — ajoute ta config Firebase pour synchroniser"; }
-    else if (u) { dot.classList.add("synced"); status.textContent = "Synchronisé — " + (u.email || "connectée"); }
-    else { dot.classList.add("local"); status.textContent = "Local — non connectée"; }
+
+    if (READONLY) {
+      dot.classList.add(u ? "synced" : "local");
+      status.textContent = u ? ("Lecture seule — " + (u.email || "connectée")) : "Lecture seule — connecte-toi pour voir";
+    } else if (!hasConfig) {
+      dot.classList.add("local"); status.textContent = "Local — ajoute ta config Firebase pour synchroniser";
+    } else if (u) {
+      dot.classList.add("synced"); status.textContent = "Synchronisé — " + (u.email || "connectée");
+    } else {
+      dot.classList.add("local"); status.textContent = "Local — non connectée";
+    }
     left.appendChild(dot); left.appendChild(status);
 
     var right = el("div", "sb-right");
@@ -132,62 +196,56 @@ const firebaseConfig = {
       bo.onclick = function () { auth.signOut().then(function () { location.reload(); }); };
       right.appendChild(bo);
     }
-    var bs = el("button", "sb-btn", "Sauvegarder .json");
-    bs.onclick = async function () {
-      var r = await window.storage.get(KEY);
-      var data = (r && r.value) ? r.value : "{}";
-      var blob = new Blob([data], { type: "application/json" });
-      var a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-      a.download = "cockpit-sauvegarde.json"; a.click();
-    };
-    right.appendChild(bs);
-    var br = el("button", "sb-btn", "Restaurer .json");
-    br.onclick = function () {
-      var inp = document.createElement("input"); inp.type = "file"; inp.accept = ".json,application/json";
-      inp.onchange = function () {
-        var f = inp.files && inp.files[0]; if (!f) return;
-        var rd = new FileReader();
-        rd.onload = async function () {
-          try { JSON.parse(rd.result); await window.storage.set(KEY, String(rd.result)); location.reload(); }
-          catch (e) { alert("Fichier .json invalide."); }
-        };
-        rd.readAsText(f);
+    if (!READONLY) {
+      var bs = el("button", "sb-btn", "Sauvegarder .json");
+      bs.onclick = async function () {
+        var r = await window.storage.get(KEY);
+        var data = (r && r.value) ? r.value : "{}";
+        var blob = new Blob([data], { type: "application/json" });
+        var a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+        a.download = "cockpit-sauvegarde.json"; a.click();
       };
-      inp.click();
-    };
-    right.appendChild(br);
+      right.appendChild(bs);
+      var br = el("button", "sb-btn", "Restaurer .json");
+      br.onclick = function () {
+        var inp = document.createElement("input"); inp.type = "file"; inp.accept = ".json,application/json";
+        inp.onchange = function () {
+          var f = inp.files && inp.files[0]; if (!f) return;
+          var rd = new FileReader();
+          rd.onload = async function () {
+            try { JSON.parse(rd.result); await window.storage.set(KEY, String(rd.result)); location.reload(); }
+            catch (e) { alert("Fichier .json invalide."); }
+          };
+          rd.readAsText(f);
+        };
+        inp.click();
+      };
+      right.appendChild(br);
+    }
 
     bar.appendChild(left); bar.appendChild(right);
   }
 
   renderBar(currentUser());
+  if (READONLY && !hasConfig) showReadMsg("Configuration Firebase manquante.");
 
-  // ---- diagnostic auto (si rien ne s'affiche) ----
+  // ---- diagnostic auto ----
   setTimeout(function () {
     var root = document.getElementById("root");
     if (!root || root.childNodes.length > 0) return;
     function ok(b){ return b ? "OK" : "MANQUANT"; }
-    var reactOk = (typeof React !== "undefined");
-    var domOk = (typeof ReactDOM !== "undefined");
-    var rechartsOk = (typeof Recharts !== "undefined");
-    var babelOk = (typeof Babel !== "undefined");
     var h = "<div style='padding:20px;font:13px/1.7 monospace;color:#0d0d0b;'>";
     h += "<b>Diagnostic — rien ne s'est affiché :</b><br><br>";
-    h += "React : " + ok(reactOk) + "<br>";
-    h += "ReactDOM : " + ok(domOk) + "<br>";
-    h += "Recharts : " + ok(rechartsOk) + "<br>";
-    h += "Babel : " + ok(babelOk) + "<br><br>";
-    if (!reactOk || !domOk || !babelOk) {
-      h += "Une librairie n'a pas pu se charger depuis Internet.<br>";
-      h += "&rarr; Vérifie que tu es <b>en ligne</b>, désactive un éventuel bloqueur de scripts, puis recharge.";
-    } else {
-      h += "Les librairies sont chargées mais l'app n'a pas démarré.<br>";
-      h += "&rarr; Ouvre la console (F12 &gt; Console) et copie-moi les lignes <b>rouges</b>.";
-    }
+    h += "React : " + ok(typeof React !== "undefined") + "<br>";
+    h += "ReactDOM : " + ok(typeof ReactDOM !== "undefined") + "<br>";
+    h += "Recharts : " + ok(typeof Recharts !== "undefined") + "<br>";
+    h += "Babel : " + ok(typeof Babel !== "undefined") + "<br><br>";
+    if (typeof React === "undefined" || typeof ReactDOM === "undefined" || typeof Babel === "undefined")
+      h += "Une librairie n'a pas pu se charger. Vérifie ta connexion / un bloqueur, puis recharge.";
+    else h += "Librairies chargées mais l'app n'a pas démarré. Console (F12) &gt; copie les lignes rouges.";
     h += "</div>";
     root.innerHTML = h;
-  }, 2000);
-
+  }, 2500);
 })();
 
 </script>
@@ -732,6 +790,7 @@ function App() {
   const [copied, setCopied] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [importText, setImportText] = useState("");
   const [importTarget, setImportTarget] = useState("concept");
   const [importMode, setImportMode] = useState("append");
@@ -938,6 +997,11 @@ function App() {
             <button className="mdbtn importbtn" onClick={() => setImportOpen(true)}>
               Importer des notes .md
             </button>
+            {typeof window !== "undefined" && window.__share && !window.__READONLY && (
+              <button className="mdbtn importbtn" onClick={() => setShareOpen(true)}>
+                Partage (lecture seule)
+              </button>
+            )}
             <p className="storenote">
               {hasStorage ? "Sauvegarde auto sur cet appareil." : "Sauvegarde indisponible ici."}
             </p>
@@ -1017,6 +1081,87 @@ function App() {
           </div>
         </div>
       )}
+
+      {shareOpen && <ShareModal onClose={() => setShareOpen(false)} />}
+    </div>
+  );
+}
+
+/* ---------------- Share (lecture seule) ---------------- */
+function ShareModal({ onClose }) {
+  const share = (typeof window !== "undefined" && window.__share) || null;
+  const [emails, setEmails] = useState([]);
+  const [input, setInput] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const link = share ? share.link : "";
+
+  useEffect(() => {
+    let ok = true;
+    if (!share) { setLoaded(true); return; }
+    (async () => {
+      try { const r = await share.getReaders(); if (ok) setEmails(r || []); } catch (e) {}
+      if (ok) setLoaded(true);
+    })();
+    return () => { ok = false; };
+  }, []);
+
+  const save = async (next) => {
+    setEmails(next); setBusy(true);
+    try { await share.setReaders(next); } catch (e) {}
+    setBusy(false);
+  };
+  const add = () => {
+    const e = input.trim().toLowerCase();
+    if (!e || !e.includes("@") || emails.includes(e)) { setInput(""); return; }
+    save([...emails, e]); setInput("");
+  };
+  const remove = (e) => save(emails.filter((x) => x !== e));
+  const copy = () => {
+    try { navigator.clipboard.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (e) {}
+  };
+
+  const notReady = !share || !share.enabled;
+
+  return (
+    <div className="bmcmodal-scrim" onClick={onClose}>
+      <div className="bmcmodal sharemodal" onClick={(e) => e.stopPropagation()}>
+        <div className="bmcmodalhead">
+          <span className="bmcicon big">↗</span>
+          <h3>Partage en lecture seule</h3>
+          <button className="bmcclose" onClick={onClose} aria-label="Fermer">×</button>
+        </div>
+        {notReady ? (
+          <p className="bmcmodalq">Connecte-toi avec Google (barre du haut) pour gérer le partage.</p>
+        ) : (
+          <>
+            <p className="bmcmodalq">Ajoute les <b>e-mails Google</b> des personnes autorisées. Elles pourront <b>voir</b> ton cockpit, sans le modifier.</p>
+            <label className="implabel">E-mails autorisés</label>
+            <div className="shareadd">
+              <input placeholder="prenom@gmail.com" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} />
+              <button className="addbtn" onClick={add} disabled={!input.trim()}>Ajouter</button>
+            </div>
+            {!loaded ? (
+              <p className="empty">Chargement…</p>
+            ) : emails.length === 0 ? (
+              <p className="empty">Personne pour l'instant.</p>
+            ) : (
+              <ul className="sharelist">
+                {emails.map((e) => (
+                  <li key={e}><span>{e}</span><button className="del" onClick={() => remove(e)} aria-label="Retirer">×</button></li>
+                ))}
+              </ul>
+            )}
+            <label className="implabel">Lien à partager</label>
+            <div className="shareadd">
+              <input readOnly value={link} onFocus={(e) => e.target.select()} />
+              <button className="addbtn" onClick={copy}>{copied ? "Copié ✓" : "Copier"}</button>
+            </div>
+            <p className="imphint">Envoie ce lien à tes proches. Ils devront se connecter avec l'e-mail que tu as ajouté.{busy ? " · Enregistrement…" : ""}</p>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -2790,6 +2935,11 @@ function StyleTag() {
 .mdbtn:hover{background:var(--plum);color:#fff;border-color:var(--plum);}
 .storenote{font-family:'DM Sans',sans-serif;font-size:10px;color:var(--ink-soft);margin:8px 0 0;}
 .importbtn{margin-top:8px;}
+.sharemodal{max-width:460px;text-align:left;}
+.shareadd{display:flex;gap:8px;margin-bottom:6px;}
+.shareadd input{flex:1;}
+.sharelist{list-style:none;margin:6px 0 4px;padding:0;display:flex;flex-direction:column;gap:6px;}
+.sharelist li{display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--sand-2);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:13px;}
 .importmodal{max-width:520px;text-align:left;}
 .implabel{display:block;font-size:12px;font-weight:600;color:var(--ink);margin:12px 0 5px;}
 .impfile{width:100%;font-size:13px;padding:8px;}
@@ -3361,7 +3511,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 
 </script>
 <script>
-(function () {
+window.__ranApp = false;
+window.__runApp = function () {
+  if (window.__ranApp) return; window.__ranApp = true;
   try {
     if (typeof Babel === 'undefined') throw new Error('Babel non chargé (vérifie ta connexion).');
     var src = document.getElementById('app-src').textContent;
@@ -3371,7 +3523,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
     var r = document.getElementById('root');
     if (r) r.innerHTML = '<pre class="apperr">' + (err && err.stack ? err.stack : err) + '</pre>';
   }
-})();
+};
+if (!window.__READONLY) window.__runApp();
 </script>
 </body>
 </html>
