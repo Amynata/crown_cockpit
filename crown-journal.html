@@ -1,0 +1,1170 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crown On Me — Journal de bord</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=DM+Sans:wght@200;300;400&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --noir:   #0d0d0b;
+  --amber:  #c9854a;
+  --ivoire: #f2ece0;
+  --kraft:  #d4b896;
+  --taupe:  #8b7355;
+  --sidebar-w: 220px;
+}
+
+body {
+  background: var(--ivoire);
+  color: var(--noir);
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 300;
+  min-height: 100vh;
+  display: flex;
+}
+
+/* ─── SIDEBAR ─── */
+.sidebar {
+  width: var(--sidebar-w);
+  min-height: 100vh;
+  background: var(--noir);
+  border-right: 1px solid var(--noir);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  z-index: 100;
+}
+
+.sidebar-brand {
+  padding: 32px 24px 24px;
+  border-bottom: 1px solid #ffffff15;
+}
+
+.sidebar-wordmark {
+  font-family: 'Cormorant Garamond', serif;
+  font-weight: 300;
+  font-size: 1.3rem;
+  letter-spacing: 0.05em;
+  color: var(--ivoire);
+  line-height: 1;
+}
+
+.sidebar-wordmark em {
+  font-style: italic;
+  color: var(--amber);
+}
+
+.sidebar-sub {
+  font-size: 0.6rem;
+  font-weight: 300;
+  color: var(--taupe);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  margin-top: 6px;
+}
+
+.sidebar-date {
+  font-size: 0.65rem;
+  color: var(--kraft);
+  margin-top: 4px;
+  letter-spacing: 0.05em;
+}
+
+.sidebar-nav {
+  flex: 1;
+  padding: 16px 0;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 24px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 300;
+  color: var(--kraft);
+  letter-spacing: 0.06em;
+  transition: all 0.15s;
+  border-left: 2px solid transparent;
+  text-decoration: none;
+}
+
+.nav-item:hover {
+  color: var(--ivoire);
+  background: #ffffff08;
+}
+
+.nav-item.active {
+  color: var(--amber);
+  border-left-color: var(--amber);
+  background: #c9854a10;
+}
+
+.nav-icon {
+  font-size: 0.85rem;
+  width: 16px;
+  text-align: center;
+}
+
+.sidebar-footer {
+  padding: 20px 24px;
+  border-top: 1px solid #ffffff10;
+  font-size: 0.58rem;
+  color: #ffffff25;
+  letter-spacing: 0.08em;
+  line-height: 1.8;
+}
+
+/* ─── MAIN ─── */
+.main {
+  margin-left: var(--sidebar-w);
+  flex: 1;
+  min-height: 100vh;
+}
+
+.section {
+  display: none;
+  padding: 48px 56px 80px;
+  max-width: 860px;
+}
+
+.section.active {
+  display: block;
+}
+
+/* ─── HEADER DE SECTION ─── */
+.section-header {
+  border-bottom: 1px solid var(--noir);
+  padding-bottom: 20px;
+  margin-bottom: 40px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+
+.section-eyebrow {
+  font-size: 0.6rem;
+  font-weight: 400;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--amber);
+  margin-bottom: 6px;
+}
+
+.section-title {
+  font-family: 'Cormorant Garamond', serif;
+  font-weight: 300;
+  font-size: 2rem;
+  line-height: 1.1;
+  color: var(--noir);
+}
+
+.section-title em {
+  font-style: italic;
+  color: var(--amber);
+}
+
+.section-meta {
+  font-size: 0.65rem;
+  color: var(--taupe);
+  text-align: right;
+  line-height: 1.7;
+}
+
+/* ─── AUJOURD'HUI ─── */
+.today-prompt {
+  border: 1px solid var(--noir);
+  padding: 28px 32px;
+  margin-bottom: 2px;
+}
+
+.today-prompt-label {
+  font-size: 0.6rem;
+  font-weight: 400;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--amber);
+  margin-bottom: 16px;
+  display: block;
+}
+
+.today-prompt-q {
+  font-family: 'Cormorant Garamond', serif;
+  font-weight: 300;
+  font-size: 1.3rem;
+  color: var(--noir);
+  margin-bottom: 4px;
+}
+
+.today-entries {
+  border: 1px solid var(--noir);
+  border-top: none;
+}
+
+.today-entry {
+  padding: 20px 32px;
+  border-bottom: 1px solid #0d0d0b20;
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+.today-entry:last-child { border-bottom: none; }
+
+.entry-date {
+  font-size: 0.62rem;
+  color: var(--taupe);
+  letter-spacing: 0.08em;
+  padding-top: 2px;
+  line-height: 1.6;
+}
+
+.entry-date strong {
+  display: block;
+  color: var(--amber);
+  font-weight: 400;
+  font-size: 0.7rem;
+}
+
+.entry-text {
+  font-size: 0.88rem;
+  font-weight: 300;
+  color: var(--noir);
+  line-height: 1.7;
+}
+
+.entry-tag {
+  display: inline-block;
+  font-size: 0.55rem;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  margin-top: 8px;
+  margin-right: 4px;
+}
+
+.tag-idee { color: var(--taupe); }
+.tag-question { color: #6b8a6b; }
+.tag-blocage { color: #a05050; }
+.tag-insight { color: var(--amber); }
+
+/* ─── HYPOTHÈSES ─── */
+.hypo-table {
+  border: 1px solid var(--noir);
+  width: 100%;
+}
+
+.hypo-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  border-bottom: 1px solid #0d0d0b20;
+}
+
+.hypo-row:last-child { border-bottom: none; }
+
+.hypo-head {
+  background: var(--noir);
+  color: var(--ivoire);
+}
+
+.hypo-cell {
+  padding: 14px 20px;
+  font-size: 0.8rem;
+  font-weight: 300;
+  line-height: 1.5;
+  border-right: 1px solid #0d0d0b20;
+}
+
+.hypo-head .hypo-cell {
+  font-size: 0.58rem;
+  font-weight: 400;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--kraft);
+  border-right-color: #ffffff15;
+}
+
+.hypo-cell:last-child { border-right: none; }
+
+.status-pill {
+  display: inline-block;
+  font-size: 0.6rem;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 20px;
+}
+
+.status-en-cours  { background: #c9854a20; color: var(--amber); }
+.status-valide    { background: #4a7c4a20; color: #4a7c4a; }
+.status-infirme   { background: #7c4a4a20; color: #7c4a4a; }
+
+.hypo-note {
+  font-size: 0.68rem;
+  color: var(--taupe);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+/* ─── DÉCISIONS ─── */
+.decision-list {
+  border: 1px solid var(--noir);
+}
+
+.decision-item {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  gap: 0;
+  border-bottom: 1px solid #0d0d0b20;
+}
+
+.decision-item:last-child { border-bottom: none; }
+
+.decision-date-col {
+  padding: 20px;
+  border-right: 1px solid #0d0d0b20;
+  background: #0d0d0b05;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding-top: 22px;
+}
+
+.decision-day {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 1.8rem;
+  font-weight: 300;
+  color: var(--amber);
+  line-height: 1;
+}
+
+.decision-month {
+  font-size: 0.6rem;
+  color: var(--taupe);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
+.decision-body {
+  padding: 20px 24px;
+}
+
+.decision-titre {
+  font-weight: 400;
+  font-size: 0.88rem;
+  color: var(--noir);
+  margin-bottom: 6px;
+}
+
+.decision-detail {
+  font-size: 0.78rem;
+  font-weight: 300;
+  color: var(--taupe);
+  line-height: 1.6;
+}
+
+.decision-category {
+  font-size: 0.58rem;
+  font-weight: 400;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--amber);
+  margin-bottom: 8px;
+  display: block;
+}
+
+/* ─── MILESTONES ─── */
+.milestone-track {
+  border: 1px solid var(--noir);
+  margin-bottom: 2px;
+}
+
+.milestone-item {
+  display: grid;
+  grid-template-columns: 48px 1fr 120px;
+  border-bottom: 1px solid #0d0d0b15;
+  align-items: center;
+}
+
+.milestone-item:last-child { border-bottom: none; }
+
+.milestone-indicator {
+  width: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  padding: 20px 0;
+  border-right: 1px solid #0d0d0b15;
+}
+
+.milestone-body {
+  padding: 16px 20px;
+  border-right: 1px solid #0d0d0b15;
+}
+
+.milestone-titre {
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: var(--noir);
+  margin-bottom: 3px;
+}
+
+.milestone-desc {
+  font-size: 0.72rem;
+  font-weight: 300;
+  color: var(--taupe);
+  line-height: 1.5;
+}
+
+.milestone-status-col {
+  padding: 16px 20px;
+  text-align: center;
+}
+
+.ms-done     { color: #4a7c4a; font-size: 0.65rem; letter-spacing: 0.1em; text-transform: uppercase; }
+.ms-now      { color: var(--amber); font-size: 0.65rem; letter-spacing: 0.1em; text-transform: uppercase; font-weight: 400; }
+.ms-next     { color: var(--taupe); font-size: 0.65rem; letter-spacing: 0.1em; text-transform: uppercase; }
+
+.ms-date {
+  font-size: 0.62rem;
+  color: var(--taupe);
+  display: block;
+  margin-top: 3px;
+}
+
+/* ─── PRODUIT ─── */
+.product-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  margin-bottom: 2px;
+}
+
+.product-card {
+  border: 1px solid var(--noir);
+  padding: 28px 28px;
+}
+
+.product-card-label {
+  font-size: 0.58rem;
+  font-weight: 400;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--amber);
+  margin-bottom: 16px;
+  display: block;
+}
+
+.product-card-name {
+  font-family: 'Cormorant Garamond', serif;
+  font-weight: 300;
+  font-size: 1.3rem;
+  color: var(--noir);
+  margin-bottom: 4px;
+  line-height: 1.2;
+}
+
+.product-card-name em {
+  font-style: italic;
+  color: var(--amber);
+}
+
+.product-card-role {
+  font-size: 0.68rem;
+  color: var(--taupe);
+  margin-bottom: 20px;
+  font-weight: 300;
+}
+
+.pain-list {
+  list-style: none;
+  margin-bottom: 16px;
+}
+
+.pain-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 0.78rem;
+  font-weight: 300;
+  color: var(--noir);
+  line-height: 1.5;
+}
+
+.pain-bar-wrap {
+  flex-shrink: 0;
+  display: flex;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.pain-bar {
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+  background: #0d0d0b15;
+}
+
+.pain-bar.on { background: var(--amber); }
+
+.solution-block {
+  border: 1px solid var(--noir);
+  padding: 28px;
+  margin-bottom: 2px;
+}
+
+.solution-title {
+  font-family: 'Cormorant Garamond', serif;
+  font-weight: 300;
+  font-size: 1.4rem;
+  color: var(--noir);
+  margin-bottom: 4px;
+}
+
+.solution-title em { font-style: italic; color: var(--amber); }
+
+.solution-desc {
+  font-size: 0.82rem;
+  font-weight: 300;
+  color: var(--taupe);
+  line-height: 1.7;
+  margin-bottom: 16px;
+}
+
+.solution-features {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.feat-item {
+  font-size: 0.72rem;
+  font-weight: 300;
+  color: var(--taupe);
+  line-height: 1.5;
+  padding-left: 12px;
+  position: relative;
+}
+
+.feat-item::before {
+  content: '—';
+  position: absolute;
+  left: 0;
+  color: var(--kraft);
+}
+
+/* ─── RESSOURCES ─── */
+.ressource-group {
+  border: 1px solid var(--noir);
+  margin-bottom: 2px;
+}
+
+.ressource-group-header {
+  padding: 14px 24px;
+  background: var(--noir);
+  font-size: 0.6rem;
+  font-weight: 400;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--kraft);
+}
+
+.ressource-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  padding: 14px 24px;
+  border-bottom: 1px solid #0d0d0b15;
+  gap: 16px;
+}
+
+.ressource-item:last-child { border-bottom: none; }
+
+.ressource-name {
+  font-size: 0.82rem;
+  font-weight: 400;
+  color: var(--noir);
+  margin-bottom: 2px;
+}
+
+.ressource-desc {
+  font-size: 0.68rem;
+  font-weight: 300;
+  color: var(--taupe);
+  line-height: 1.5;
+}
+
+.ressource-link {
+  font-size: 0.62rem;
+  color: var(--amber);
+  text-decoration: none;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--amber);
+  padding-bottom: 1px;
+}
+
+.ressource-link:hover { opacity: 0.7; }
+
+/* ─── BURGER MOBILE ─── */
+.burger {
+  display: none;
+  position: fixed;
+  top: 16px; right: 16px;
+  z-index: 200;
+  background: var(--noir);
+  border: none;
+  padding: 10px 12px;
+  cursor: pointer;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.burger span {
+  display: block;
+  width: 20px;
+  height: 1px;
+  background: var(--ivoire);
+}
+
+@media (max-width: 768px) {
+  .burger { display: flex; }
+  .sidebar {
+    transform: translateX(-100%);
+    transition: transform 0.2s;
+  }
+  .sidebar.open { transform: translateX(0); }
+  .main { margin-left: 0; }
+  .section { padding: 32px 24px 60px; }
+  .product-grid { grid-template-columns: 1fr; }
+  .solution-features { grid-template-columns: 1fr 1fr; }
+  .hypo-row { grid-template-columns: 1fr; }
+  .hypo-head { display: none; }
+  .decision-item { grid-template-columns: 70px 1fr; }
+  .milestone-item { grid-template-columns: 40px 1fr; }
+  .milestone-status-col { display: none; }
+}
+</style>
+</head>
+<body>
+
+<button class="burger" onclick="toggleSidebar()" aria-label="Menu">
+  <span></span><span></span><span></span>
+</button>
+
+<!-- SIDEBAR -->
+<nav class="sidebar" id="sidebar">
+  <div class="sidebar-brand">
+    <div class="sidebar-wordmark">Crown <em>on me</em></div>
+    <div class="sidebar-sub">Journal de bord</div>
+    <div class="sidebar-date" id="todayDate"></div>
+  </div>
+  <div class="sidebar-nav">
+    <a class="nav-item active" onclick="showSection('aujourd-hui')" href="#">
+      <span class="nav-icon">◈</span> Aujourd'hui
+    </a>
+    <a class="nav-item" onclick="showSection('hypotheses')" href="#">
+      <span class="nav-icon">◎</span> Hypothèses
+    </a>
+    <a class="nav-item" onclick="showSection('decisions')" href="#">
+      <span class="nav-icon">◆</span> Décisions
+    </a>
+    <a class="nav-item" onclick="showSection('milestones')" href="#">
+      <span class="nav-icon">◇</span> Milestones
+    </a>
+    <a class="nav-item" onclick="showSection('produit')" href="#">
+      <span class="nav-icon">◉</span> Produit
+    </a>
+    <a class="nav-item" onclick="showSection('ressources')" href="#">
+      <span class="nav-icon">◈</span> Ressources
+    </a>
+  </div>
+  <div class="sidebar-footer">
+    Crown On Me · Confidentiel<br>
+    La Ligue · Startup Banlieue 2026
+  </div>
+</nav>
+
+<!-- MAIN -->
+<main class="main">
+
+  <!-- ── AUJOURD'HUI ── -->
+  <section class="section active" id="aujourd-hui">
+    <div class="section-header">
+      <div>
+        <div class="section-eyebrow">Capture rapide</div>
+        <div class="section-title">Aujourd'hui</div>
+      </div>
+      <div class="section-meta">Réflexions · Idées · Blocages</div>
+    </div>
+
+    <div class="today-prompt">
+      <span class="today-prompt-label">Prompt du jour</span>
+      <div class="today-prompt-q">Qu'est-ce qui avance ? Qu'est-ce qui bloque ?</div>
+    </div>
+
+    <div class="today-entries">
+      <div class="today-entry">
+        <div class="entry-date">
+          <strong>28 Juin</strong>
+          2026
+        </div>
+        <div class="entry-text">
+          Sélectionnée pour La Ligue — Startup Banlieue. Premier mentorat confirmé sur le volet "comment scaler". Questionner la vraie valeur du programme vs effort temps à investir.
+          <br>
+          <span class="entry-tag tag-insight">Insight</span>
+          <span class="entry-tag tag-question">Question</span>
+        </div>
+      </div>
+      <div class="today-entry">
+        <div class="entry-date">
+          <strong>28 Juin</strong>
+          2026
+        </div>
+        <div class="entry-text">
+          Structuration de l'espace de travail Claude. Journal HTML plutôt que Notion — plus fluide, dans l'identité, zéro friction. À tester sur 2 semaines.
+          <br>
+          <span class="entry-tag tag-idee">Idée</span>
+        </div>
+      </div>
+      <!-- AJOUTER ICI les nouvelles entrées avec la même structure -->
+    </div>
+  </section>
+
+  <!-- ── HYPOTHÈSES ── -->
+  <section class="section" id="hypotheses">
+    <div class="section-header">
+      <div>
+        <div class="section-eyebrow">Ce qu'on teste</div>
+        <div class="section-title">Hypothèses</div>
+      </div>
+      <div class="section-meta">Validé · En cours · Infirmé</div>
+    </div>
+
+    <div class="hypo-table">
+      <div class="hypo-row hypo-head">
+        <div class="hypo-cell">Hypothèse</div>
+        <div class="hypo-cell">Statut</div>
+        <div class="hypo-cell">Note</div>
+      </div>
+      <div class="hypo-row">
+        <div class="hypo-cell">
+          La cliente et la coiffeuse ne partagent pas la même référence visuelle avant le RDV — c'est la source principale de déception.
+        </div>
+        <div class="hypo-cell">
+          <span class="status-pill status-en-cours">En cours</span>
+        </div>
+        <div class="hypo-cell">
+          <div class="hypo-note">Validé par expérience fondatrice. Terrain à confirmer via interviews structurées.</div>
+        </div>
+      </div>
+      <div class="hypo-row">
+        <div class="hypo-cell">
+          Les coiffeuses afro manquent de vitrine digitale et cherchent à mieux qualifier leurs clientes en amont.
+        </div>
+        <div class="hypo-cell">
+          <span class="status-pill status-en-cours">En cours</span>
+        </div>
+        <div class="hypo-cell">
+          <div class="hypo-note">Retours terrain positifs. Besoin de 5+ entretiens B2B formels.</div>
+        </div>
+      </div>
+      <div class="hypo-row">
+        <div class="hypo-cell">
+          Une simulation IA (même imparfaite) suffit à créer une référence commune utile entre cliente et coiffeuse.
+        </div>
+        <div class="hypo-cell">
+          <span class="status-pill status-en-cours">En cours</span>
+        </div>
+        <div class="hypo-cell">
+          <div class="hypo-note">Fal.ai/Flux produit des résultats plausibles — pas de test utilisateur réel encore.</div>
+        </div>
+      </div>
+      <div class="hypo-row">
+        <div class="hypo-cell">
+          Le modèle freemium (5 simulations gratuites) convertit vers Plan Crown 4,99€/mois.
+        </div>
+        <div class="hypo-cell">
+          <span class="status-pill status-next" style="background:#8b735520;color:var(--taupe);display:inline-block;font-size:0.6rem;font-weight:400;letter-spacing:0.1em;text-transform:uppercase;padding:3px 10px;border-radius:20px;">À tester</span>
+        </div>
+        <div class="hypo-cell">
+          <div class="hypo-note">Aucune donnée. À mesurer dès le lancement MVP.</div>
+        </div>
+      </div>
+      <!-- AJOUTER ICI les nouvelles hypothèses -->
+    </div>
+  </section>
+
+  <!-- ── DÉCISIONS ── -->
+  <section class="section" id="decisions">
+    <div class="section-header">
+      <div>
+        <div class="section-eyebrow">Log chronologique</div>
+        <div class="section-title">Décisions</div>
+      </div>
+      <div class="section-meta">Ce qui est acté</div>
+    </div>
+
+    <div class="decision-list">
+      <div class="decision-item">
+        <div class="decision-date-col">
+          <div class="decision-day">28</div>
+          <div class="decision-month">Juin 26</div>
+        </div>
+        <div class="decision-body">
+          <span class="decision-category">Positionnement</span>
+          <div class="decision-titre">Recentrage sur la "référence partagée" — pas la prédiction de résultat</div>
+          <div class="decision-detail">L'IA rend le désir visible, pas la faisabilité. La valeur est la communication entre cliente et coiffeuse — pas la garantie du résultat. Tagline : "La même référence. Le même objectif."</div>
+        </div>
+      </div>
+      <div class="decision-item">
+        <div class="decision-date-col">
+          <div class="decision-day">28</div>
+          <div class="decision-month">Juin 26</div>
+        </div>
+        <div class="decision-body">
+          <span class="decision-category">Structure</span>
+          <div class="decision-titre">Journal de bord HTML plutôt que Notion</div>
+          <div class="decision-detail">Notion crée de la friction. Un fichier HTML dans l'identité Crown On Me, hébergé GitHub Pages, éditable avec Claude. Plus fluide, partageable au besoin.</div>
+        </div>
+      </div>
+      <div class="decision-item">
+        <div class="decision-date-col">
+          <div class="decision-day">28</div>
+          <div class="decision-month">Juin 26</div>
+        </div>
+        <div class="decision-body">
+          <span class="decision-category">Financement</span>
+          <div class="decision-titre">Projections financières à retravailler avant pitch investisseur</div>
+          <div class="decision-detail">EBITDA positif mois 3 et 98% de marge à maturité ne sont pas crédibles. À corriger avant toute présentation externe.</div>
+        </div>
+      </div>
+      <!-- AJOUTER ICI les nouvelles décisions -->
+    </div>
+  </section>
+
+  <!-- ── MILESTONES ── -->
+  <section class="section" id="milestones">
+    <div class="section-header">
+      <div>
+        <div class="section-eyebrow">5 mois · Juillet → Novembre 2026</div>
+        <div class="section-title"><em>Avancement</em></div>
+      </div>
+      <div class="section-meta">MVP → Test → Pitch investisseur</div>
+    </div>
+
+    <div class="milestone-track">
+      <div class="milestone-item">
+        <div class="milestone-indicator">✦</div>
+        <div class="milestone-body">
+          <div class="milestone-titre">Sélection La Ligue — Startup Banlieue</div>
+          <div class="milestone-desc">Weekend de détection passé. Mentorat confirmé. Programme 6 mois démarré.</div>
+        </div>
+        <div class="milestone-status-col">
+          <div class="ms-done">✓ Fait</div>
+          <span class="ms-date">28 Juin 2026</span>
+        </div>
+      </div>
+      <div class="milestone-item">
+        <div class="milestone-indicator">◈</div>
+        <div class="milestone-body">
+          <div class="milestone-titre">Speech investisseur — version 1</div>
+          <div class="milestone-desc">Problématique chiffrée, solution, marché, traction attendue. 3 minutes max.</div>
+        </div>
+        <div class="milestone-status-col">
+          <div class="ms-now">→ En cours</div>
+          <span class="ms-date">Juillet 2026</span>
+        </div>
+      </div>
+      <div class="milestone-item">
+        <div class="milestone-indicator">◇</div>
+        <div class="milestone-body">
+          <div class="milestone-titre">MVP live — simulation fonctionnelle</div>
+          <div class="milestone-desc">Upload photo + simulation Fal.ai + résultat avant/après. Testable par de vraies utilisatrices.</div>
+        </div>
+        <div class="milestone-status-col">
+          <div class="ms-next">À venir</div>
+          <span class="ms-date">Août 2026</span>
+        </div>
+      </div>
+      <div class="milestone-item">
+        <div class="milestone-indicator">◇</div>
+        <div class="milestone-body">
+          <div class="milestone-titre">5 interviews utilisatrices terrain</div>
+          <div class="milestone-desc">Validation des hypothèses clés. Femmes aux cheveux texturés, France.</div>
+        </div>
+        <div class="milestone-status-col">
+          <div class="ms-next">À venir</div>
+          <span class="ms-date">Août 2026</span>
+        </div>
+      </div>
+      <div class="milestone-item">
+        <div class="milestone-indicator">◇</div>
+        <div class="milestone-body">
+          <div class="milestone-titre">Premier contrat B2B signé — 1 salon</div>
+          <div class="milestone-desc">Le milestone de crédibilité le plus fort. Un salon partenaire, même petit.</div>
+        </div>
+        <div class="milestone-status-col">
+          <div class="ms-next">À venir</div>
+          <span class="ms-date">Sept. 2026</span>
+        </div>
+      </div>
+      <div class="milestone-item">
+        <div class="milestone-indicator">◇</div>
+        <div class="milestone-body">
+          <div class="milestone-titre">Pitch investisseur — La Ligue Demo Day</div>
+          <div class="milestone-desc">Présentation finale avec traction réelle, métriques, deck complet.</div>
+        </div>
+        <div class="milestone-status-col">
+          <div class="ms-next">À venir</div>
+          <span class="ms-date">Nov. 2026</span>
+        </div>
+      </div>
+      <!-- AJOUTER ICI les nouveaux milestones -->
+    </div>
+  </section>
+
+  <!-- ── PRODUIT ── -->
+  <section class="section" id="produit">
+    <div class="section-header">
+      <div>
+        <div class="section-eyebrow">Vision produit</div>
+        <div class="section-title">Produit</div>
+      </div>
+      <div class="section-meta">Personas · Pain points · Solution</div>
+    </div>
+
+    <div class="product-grid">
+      <!-- Persona 1 -->
+      <div class="product-card">
+        <span class="product-card-label">Persona B2C · Utilisatrice</span>
+        <div class="product-card-name">Amara, <em>22 ans</em></div>
+        <div class="product-card-role">Étudiante · Paris · Transition capillaire</div>
+        <ul class="pain-list">
+          <li class="pain-item">
+            <div class="pain-bar-wrap">
+              <div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar"></div>
+            </div>
+            Peur de mal communiquer avec la coiffeuse
+          </li>
+          <li class="pain-item">
+            <div class="pain-bar-wrap">
+              <div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar"></div><div class="pain-bar"></div>
+            </div>
+            Heures sur Pinterest sans trouver son style
+          </li>
+          <li class="pain-item">
+            <div class="pain-bar-wrap">
+              <div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar on"></div>
+            </div>
+            Budget limité — risque élevé sur une coiffure chère
+          </li>
+        </ul>
+        <span class="entry-tag tag-insight">Freemium → Crown</span>
+      </div>
+
+      <!-- Persona 2 -->
+      <div class="product-card">
+        <span class="product-card-label">Persona B2C · Engagée</span>
+        <div class="product-card-name">Fatou, <em>31 ans</em></div>
+        <div class="product-card-role">Cadre marketing · Lyon · Cheveux naturels 3 ans</div>
+        <ul class="pain-list">
+          <li class="pain-item">
+            <div class="pain-bar-wrap">
+              <div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar on"></div>
+            </div>
+            Apps existantes ne reconnaissent pas les cheveux afro
+          </li>
+          <li class="pain-item">
+            <div class="pain-bar-wrap">
+              <div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar"></div>
+            </div>
+            Veut tester avant de se lancer — change souvent de style
+          </li>
+          <li class="pain-item">
+            <div class="pain-bar-wrap">
+              <div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar"></div><div class="pain-bar"></div>
+            </div>
+            Manque de références visuelles pour sa texture
+          </li>
+        </ul>
+        <span class="entry-tag tag-insight">Payante dès le départ</span>
+      </div>
+
+      <!-- Persona 3 -->
+      <div class="product-card" style="grid-column: 1 / -1;">
+        <span class="product-card-label">Persona B2B2C · Professionnelle</span>
+        <div class="product-card-name">Nadège, <em>35 ans</em></div>
+        <div class="product-card-role">Gérante salon afro · Bordeaux · 8 ans d'expérience · 200 clientes</div>
+        <ul class="pain-list" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+          <li class="pain-item">
+            <div class="pain-bar-wrap">
+              <div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar"></div>
+            </div>
+            Pas de vitrine digitale — invisible en ligne
+          </li>
+          <li class="pain-item">
+            <div class="pain-bar-wrap">
+              <div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar on"></div>
+            </div>
+            Clientes mal préparées — consultation longue et frustrante
+          </li>
+          <li class="pain-item">
+            <div class="pain-bar-wrap">
+              <div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar on"></div><div class="pain-bar"></div><div class="pain-bar"></div>
+            </div>
+            Aucun outil de gestion adapté au salon afro
+          </li>
+        </ul>
+        <span class="entry-tag tag-insight">Pro Salon 39€/mois</span>
+      </div>
+    </div>
+
+    <!-- Solution -->
+    <div class="solution-block">
+      <span class="product-card-label">La solution</span>
+      <div class="solution-title">La même référence.<br><em>Le même objectif.</em></div>
+      <div class="solution-desc">
+        Crown On Me n'est pas un outil de prédiction de résultat — c'est une couche de communication et de traduction entre cliente et coiffeuse. L'IA rend le désir visible. La coiffeuse valide la faisabilité à distance.
+      </div>
+      <div class="solution-features">
+        <div class="feat-item">Simulation IA image-to-image (Fal.ai Flux.1) sur cheveux texturés</div>
+        <div class="feat-item">Portfolio réel des coiffeuses — ce qu'elle simule, la pro sait le faire</div>
+        <div class="feat-item">Réservation intégrée — la simulation voyage avec le RDV</div>
+        <div class="feat-item">Freemium 5 simulations → Plan Crown 4,99€/mois</div>
+        <div class="feat-item">Pro Salon 39€/mois — portfolio, calendrier, stats</div>
+        <div class="feat-item">Stack : FlutterFlow + Firebase + Fal.ai + Make.com</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── RESSOURCES ── -->
+  <section class="section" id="ressources">
+    <div class="section-header">
+      <div>
+        <div class="section-eyebrow">Liens & contacts</div>
+        <div class="section-title">Ressources</div>
+      </div>
+      <div class="section-meta">Outils · Références · Partenaires</div>
+    </div>
+
+    <div class="ressource-group">
+      <div class="ressource-group-header">Stack technique</div>
+      <div class="ressource-item">
+        <div>
+          <div class="ressource-name">Fal.ai — Flux.1 Dev</div>
+          <div class="ressource-desc">Moteur de simulation IA image-to-image · 0,025$/simulation</div>
+        </div>
+        <a href="https://fal.ai" target="_blank" class="ressource-link">→ fal.ai</a>
+      </div>
+      <div class="ressource-item">
+        <div>
+          <div class="ressource-name">FlutterFlow</div>
+          <div class="ressource-desc">App mobile/web no-code · Google Fonts compatible</div>
+        </div>
+        <a href="https://flutterflow.io" target="_blank" class="ressource-link">→ flutterflow.io</a>
+      </div>
+      <div class="ressource-item">
+        <div>
+          <div class="ressource-name">Firebase</div>
+          <div class="ressource-desc">Backend · Stockage photos · Auth utilisatrices</div>
+        </div>
+        <a href="https://firebase.google.com" target="_blank" class="ressource-link">→ firebase.google.com</a>
+      </div>
+      <div class="ressource-item">
+        <div>
+          <div class="ressource-name">Make.com</div>
+          <div class="ressource-desc">Automation des flux — onboarding coiffeuses, notifications</div>
+        </div>
+        <a href="https://make.com" target="_blank" class="ressource-link">→ make.com</a>
+      </div>
+    </div>
+
+    <div class="ressource-group">
+      <div class="ressource-group-header">Références marché</div>
+      <div class="ressource-item">
+        <div>
+          <div class="ressource-name">Zenaba</div>
+          <div class="ressource-desc">Concurrent / référence · Annuaire coiffure afro France · 400+ coiffeuses</div>
+        </div>
+        <a href="https://zenaba.fr" target="_blank" class="ressource-link">→ zenaba.fr</a>
+      </div>
+      <div class="ressource-item">
+        <div>
+          <div class="ressource-name">Planity</div>
+          <div class="ressource-desc">Référence B2B SaaS · Abonnement non-commission · Potentiel partenariat</div>
+        </div>
+        <a href="https://planity.com" target="_blank" class="ressource-link">→ planity.com</a>
+      </div>
+    </div>
+
+    <div class="ressource-group">
+      <div class="ressource-group-header">Projet & documentation</div>
+      <div class="ressource-item">
+        <div>
+          <div class="ressource-name">Dossier projet — site public</div>
+          <div class="ressource-desc">Pitch complet Crown On Me · La Ligue 2026</div>
+        </div>
+        <a href="https://amynata.github.io/cronw-on-me-pitch/" target="_blank" class="ressource-link">→ GitHub Pages</a>
+      </div>
+      <div class="ressource-item">
+        <div>
+          <div class="ressource-name">Notion Dashboard</div>
+          <div class="ressource-desc">Kanban · ID: 2f257405-1e75-806a-a92e-f59acd73ba6d</div>
+        </div>
+        <a href="https://notion.so" target="_blank" class="ressource-link">→ notion.so</a>
+      </div>
+      <div class="ressource-item">
+        <div>
+          <div class="ressource-name">Apify — Instagram scraper</div>
+          <div class="ressource-desc">Scraping salons afro Instagram · Estimation marché coiffeuses · Plan gratuit</div>
+        </div>
+        <a href="https://apify.com" target="_blank" class="ressource-link">→ apify.com</a>
+      </div>
+    </div>
+    <!-- AJOUTER ICI les nouvelles ressources -->
+  </section>
+
+</main>
+
+<script>
+// Date du jour
+const d = new Date();
+const jours = ['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
+const mois  = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+document.getElementById('todayDate').textContent =
+  jours[d.getDay()] + ' ' + d.getDate() + ' ' + mois[d.getMonth()];
+
+// Navigation
+function showSection(id) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  event.currentTarget.classList.add('active');
+  if (window.innerWidth <= 768) document.getElementById('sidebar').classList.remove('open');
+  window.scrollTo(0, 0);
+}
+
+// Burger mobile
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+}
+</script>
+</body>
+</html>

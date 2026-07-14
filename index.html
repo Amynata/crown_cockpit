@@ -1,0 +1,3376 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Crown On Me — Cockpit</title>
+<script>
+window.addEventListener('error', function (e) {
+  var root = document.getElementById('root');
+  if (root && root.childNodes.length === 0) {
+    var msg = (e && e.message) ? e.message
+      : ('Ressource non chargee : ' + ((e && e.target && (e.target.src || e.target.href)) || 'inconnue'));
+    root.innerHTML = '<pre style="white-space:pre-wrap;padding:20px;color:#b5462a;font:13px/1.5 monospace;">\u26a0 ' + msg + '</pre>';
+  }
+}, true);
+</script>
+<script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/recharts@2.12.7/umd/Recharts.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+body{margin:0;background:#f2ece0;}
+#syncbar{position:sticky;top:0;z-index:50;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;
+  background:#0d0d0b;color:#f2ece0;padding:8px 14px;font-family:'DM Sans',system-ui,sans-serif;font-size:13px;}
+.sb-left{display:flex;align-items:center;gap:8px;min-width:0;}
+.sb-dot{width:9px;height:9px;border-radius:50%;background:#8b7355;flex:none;}
+.sb-dot.synced{background:#5fbf8a;}
+.sb-dot.local{background:#c9854a;}
+.sb-status{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.sb-right{display:flex;gap:8px;flex-wrap:wrap;}
+.sb-btn{background:transparent;border:1px solid #4a4640;color:#f2ece0;border-radius:7px;padding:5px 11px;font-size:12px;cursor:pointer;font-family:inherit;}
+.sb-btn:hover{border-color:#c9854a;color:#f6e7cf;}
+.sb-btn.primary{background:#c9854a;border-color:#c9854a;color:#2a1a05;font-weight:500;}
+
+.apperr{white-space:pre-wrap;padding:20px;color:#b5462a;font:13px/1.5 monospace;}
+</style>
+</head>
+<body>
+<div id="syncbar"></div>
+<div id="root"></div>
+<script>
+// ============================================================
+//  CONFIG FIREBASE — colle ici la config de ton projet
+//  (Firebase console > Paramètres du projet > Tes applications > Config)
+// ============================================================
+const firebaseConfig = {
+  apiKey: "",
+  authDomain: "",
+  projectId: "",
+  storageBucket: "",
+  messagingSenderId: "",
+  appId: ""
+};
+// ============================================================
+
+(function () {
+  var KEY = "crownonme:cockpit:v2";
+  var hasConfig = !!(firebaseConfig && firebaseConfig.apiKey);
+  var db = null, auth = null, provider = null, authReady = Promise.resolve(null);
+
+  if (hasConfig) {
+    try {
+      firebase.initializeApp(firebaseConfig);
+      auth = firebase.auth();
+      db = firebase.firestore();
+      provider = new firebase.auth.GoogleAuthProvider();
+      authReady = new Promise(function (res) {
+        auth.onAuthStateChanged(function (u) { renderBar(u); res(u); });
+      });
+    } catch (e) { console.error("Firebase init:", e); }
+  }
+
+  function currentUser() { return (auth && auth.currentUser) ? auth.currentUser : null; }
+  function uid() { var u = currentUser(); return u ? u.uid : null; }
+
+  window.storage = {
+    get: async function (key) {
+      if (hasConfig) {
+        await authReady;
+        var u = uid();
+        if (u) {
+          try {
+            var ref = db.collection("cockpit").doc(u);
+            var snap = await ref.get();
+            if (snap.exists && snap.data() && typeof snap.data().value === "string") return { value: snap.data().value };
+            var local = localStorage.getItem(key);
+            if (local) { await ref.set({ value: local, updatedAt: Date.now() }); return { value: local }; }
+            return null;
+          } catch (e) { console.error("Firestore get:", e); }
+        }
+      }
+      var v = localStorage.getItem(key);
+      return v ? { value: v } : null;
+    },
+    set: async function (key, value) {
+      try { localStorage.setItem(key, value); } catch (e) {}
+      var u = uid();
+      if (hasConfig && u) {
+        try { await db.collection("cockpit").doc(u).set({ value: value, updatedAt: Date.now() }); }
+        catch (e) { console.error("Firestore set:", e); }
+      }
+      return { ok: true };
+    }
+  };
+
+  function el(tag, cls, txt) { var e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
+
+  function renderBar(u) {
+    var bar = document.getElementById("syncbar");
+    if (!bar) return;
+    bar.innerHTML = "";
+    var left = el("div", "sb-left");
+    var dot = el("span", "sb-dot");
+    var status = el("span", "sb-status");
+    if (!hasConfig) { dot.classList.add("local"); status.textContent = "Local — ajoute ta config Firebase pour synchroniser"; }
+    else if (u) { dot.classList.add("synced"); status.textContent = "Synchronisé — " + (u.email || "connectée"); }
+    else { dot.classList.add("local"); status.textContent = "Local — non connectée"; }
+    left.appendChild(dot); left.appendChild(status);
+
+    var right = el("div", "sb-right");
+    if (hasConfig && !u) {
+      var bi = el("button", "sb-btn primary", "Se connecter avec Google");
+      bi.onclick = function () { auth.signInWithPopup(provider).then(function () { location.reload(); }).catch(function (e) { alert("Connexion échouée : " + e.message); }); };
+      right.appendChild(bi);
+    }
+    if (hasConfig && u) {
+      var bo = el("button", "sb-btn", "Se déconnecter");
+      bo.onclick = function () { auth.signOut().then(function () { location.reload(); }); };
+      right.appendChild(bo);
+    }
+    var bs = el("button", "sb-btn", "Sauvegarder .json");
+    bs.onclick = async function () {
+      var r = await window.storage.get(KEY);
+      var data = (r && r.value) ? r.value : "{}";
+      var blob = new Blob([data], { type: "application/json" });
+      var a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+      a.download = "cockpit-sauvegarde.json"; a.click();
+    };
+    right.appendChild(bs);
+    var br = el("button", "sb-btn", "Restaurer .json");
+    br.onclick = function () {
+      var inp = document.createElement("input"); inp.type = "file"; inp.accept = ".json,application/json";
+      inp.onchange = function () {
+        var f = inp.files && inp.files[0]; if (!f) return;
+        var rd = new FileReader();
+        rd.onload = async function () {
+          try { JSON.parse(rd.result); await window.storage.set(KEY, String(rd.result)); location.reload(); }
+          catch (e) { alert("Fichier .json invalide."); }
+        };
+        rd.readAsText(f);
+      };
+      inp.click();
+    };
+    right.appendChild(br);
+
+    bar.appendChild(left); bar.appendChild(right);
+  }
+
+  renderBar(currentUser());
+
+  // ---- diagnostic auto (si rien ne s'affiche) ----
+  setTimeout(function () {
+    var root = document.getElementById("root");
+    if (!root || root.childNodes.length > 0) return;
+    function ok(b){ return b ? "OK" : "MANQUANT"; }
+    var reactOk = (typeof React !== "undefined");
+    var domOk = (typeof ReactDOM !== "undefined");
+    var rechartsOk = (typeof Recharts !== "undefined");
+    var babelOk = (typeof Babel !== "undefined");
+    var h = "<div style='padding:20px;font:13px/1.7 monospace;color:#0d0d0b;'>";
+    h += "<b>Diagnostic — rien ne s'est affiché :</b><br><br>";
+    h += "React : " + ok(reactOk) + "<br>";
+    h += "ReactDOM : " + ok(domOk) + "<br>";
+    h += "Recharts : " + ok(rechartsOk) + "<br>";
+    h += "Babel : " + ok(babelOk) + "<br><br>";
+    if (!reactOk || !domOk || !babelOk) {
+      h += "Une librairie n'a pas pu se charger depuis Internet.<br>";
+      h += "&rarr; Vérifie que tu es <b>en ligne</b>, désactive un éventuel bloqueur de scripts, puis recharge.";
+    } else {
+      h += "Les librairies sont chargées mais l'app n'a pas démarré.<br>";
+      h += "&rarr; Ouvre la console (F12 &gt; Console) et copie-moi les lignes <b>rouges</b>.";
+    }
+    h += "</div>";
+    root.innerHTML = h;
+  }, 2000);
+
+})();
+
+</script>
+<script type="text/plain" id="app-src">
+const Rch = (typeof Recharts !== 'undefined' && Recharts) ? Recharts : {};
+const __noop = function(){ return null; };
+const ComposedChart = Rch.ComposedChart || __noop;
+const Bar = Rch.Bar || __noop;
+const Line = Rch.Line || __noop;
+const XAxis = Rch.XAxis || __noop;
+const YAxis = Rch.YAxis || __noop;
+const CartesianGrid = Rch.CartesianGrid || __noop;
+const Tooltip = Rch.Tooltip || __noop;
+const ReferenceLine = Rch.ReferenceLine || __noop;
+const ResponsiveContainer = Rch.ResponsiveContainer || __noop;
+const { useState, useEffect, useRef } = React;
+
+/* ============================================================
+   Crown On Me — Cockpit fondatrice
+   Structure façon Cuttles (menu latéral + sections détaillées
+   + questions-guides + module finances), adaptée B2B-first.
+   La couronne + la barre % suivent l'avancement global.
+   ============================================================ */
+
+const KEY = "crownonme:cockpit:v2";
+
+const CHART = {
+  revenue: "#4a8f6b",
+  expense: "#c95c46",
+  cash: "#2f8a9a",
+  be: "#6c2b4d",
+};
+
+/* ---- Section definitions ---- */
+const SECTIONS = {
+  canvas: {
+    label: "Lean Canvas",
+    q: "Ton idée en une vue, centrée problème → solution. Clique un bloc pour le lire ou le remplir.",
+    type: "bmc",
+  },
+  pitch: {
+    label: "Pitch",
+    q: "Raconte Crown On Me en 3 minutes chrono — le problème, ta réponse, ce que tu demandes.",
+    type: "fields",
+    fields: [
+      ["probleme", "Problème", "Le problème, rendu vivant"],
+      ["solution", "Solution", "Ta réponse, en clair"],
+      ["uvp", "Proposition de valeur", "Pourquoi c’est mieux / différent"],
+      ["marche", "Marché", "Taille et dynamique"],
+      ["bizmodel", "Business model", "Comment tu gagnes de l’argent"],
+      ["timing", "Pourquoi maintenant", "Ce qui rend le moment opportun"],
+      ["equipe", "Pourquoi toi", "Ce qui fait de toi la bonne personne"],
+      ["ask", "L’ask", "Montant, partenariat, pilote…"],
+    ],
+  },
+  concept: { label: "Concept", q: "Mission, vision, et l’idée en une phrase. Pourquoi Crown On Me existe ?", type: "text" },
+  opportunite: { label: "Opportunité", q: "Pourquoi maintenant ? Ce qui rend ce moment unique pour les cheveux texturés.", type: "text" },
+  marche: { label: "Marché", q: "Qui sont tes clients cibles, et quelle est la taille du marché ?", type: "text" },
+  segments: { label: "Segments & personas", q: "À qui tu t'adresses : tes segments d'utilisateurs et leurs personas.", type: "segper" },
+  produit: { label: "Produit", q: "Le produit en cartes lisibles : briques, parcours, stack. Le détail des features est dans Roadmap.", type: "produit" },
+  strategie: { label: "Stratégie", q: "Comment tu comptes gagner : positionnement, avantage, ordre d’attaque B2B / B2C.", type: "text" },
+  concurrents: { label: "Concurrents", q: "Qui d’autre est sur ce terrain, et où tu te places ? Compare-toi critère par critère.", type: "concurrents" },
+  marketing: { label: "Marketing", q: "Comment tu te fais connaître et tu acquiers tes premiers clients ?", type: "text" },
+  roadmap: { label: "Roadmap", q: "Les phases du produit et leurs features. Clique une feature pour déplier sa description.", type: "roadmap" },
+  risques: { label: "Risques & défis", q: "Ce qui pourrait faire capoter le projet — et comment tu l’anticipes.", type: "text" },
+  traction: { label: "Traction", q: "Les preuves que ça marche : demandes coiffeur·se·s, POC, signaux B2B.", type: "text" },
+  hypotheses: { label: "Hypothèses", q: "Les paris non prouvés sur lesquels tout repose. Un énoncé, un statut, une méthode pour le vérifier.", type: "hypotheses" },
+  finances: { label: "Finances", q: "Combien ça coûte, combien ça rapporte, et quand tu atteins l’équilibre.", type: "finances" },
+  tarification: { label: "Tarification", q: "Tes paliers de prix, par cible. Clique « Éditer » pour les ajuster.", type: "pricing" },
+  tech: { label: "Dév technique", q: "Piloter le build : stack, intégrations, décisions techniques et chantiers.", type: "tech" },
+  equipe: {
+    label: "Équipe & Cap Table",
+    q: "Qui construit, qui manque, et comment se répartit l’équité.",
+    type: "team",
+    fields: [
+      ["fondateurs", "Fondateur·rice·s & rôles", "Qui fait quoi"],
+      ["recruter", "Compétences à recruter", "Les trous dans la raquette"],
+      ["conseillers", "Conseiller·e·s / mentors", "Les personnes ressources autour de toi"],
+    ],
+  },
+  levee: {
+    label: "Levée & CRM",
+    q: "Combien tu lèves, auprès de qui, et où en sont les discussions.",
+    type: "levee",
+    fields: [
+      ["objectif", "Objectif de levée", "Montant visé et usage des fonds"],
+      ["programmes", "Programmes / accélérateurs", "Startup Banlieue, La Ligue, autres…"],
+      ["dataroom", "Data room / documents", "Où en est le pitch deck, le BP, les chiffres"],
+    ],
+  },
+};
+
+const GROUPS = [
+  { title: "Cadrage", keys: ["canvas", "pitch"] },
+  { title: "Plan", keys: ["concept", "opportunite", "marche", "segments", "produit", "strategie", "concurrents", "marketing", "roadmap", "risques", "traction"] },
+  { title: "Discovery", keys: ["hypotheses"] },
+  { title: "Build", keys: ["tech"] },
+  { title: "Chiffres", keys: ["finances", "tarification"] },
+  { title: "Équipe", keys: ["equipe"] },
+  { title: "Levée", keys: ["levee"] },
+];
+
+const ALL_KEYS = GROUPS.flatMap((g) => g.keys);
+
+const STATUS = { todo: "À faire", doing: "En cours", done: "Validé" };
+const STATUS_WEIGHT = { todo: 0, doing: 0.5, done: 1 };
+const NOTION_SB_URL = "https://www.notion.so/358574051e758075b95def171df3ef09?v=358574051e75809b9094000c9fd2d3eb&source=copy_link";
+function isStarted(state, k) {
+  return !!(state && state.touched && state.touched[k]);
+}
+
+const CRM_STATUS = ["À contacter", "En discussion", "Relance", "Positif", "Négatif"];
+
+function monthLabels(start = new Date(), n = 6) {
+  const out = [];
+  const fmt = new Intl.DateTimeFormat("fr-FR", { month: "short", year: "2-digit" });
+  for (let i = 0; i < n; i++) {
+    const d = new Date(start.getFullYear(), start.getMonth() + i, 1);
+    out.push(fmt.format(d).replace(".", ""));
+  }
+  return out;
+}
+
+let _rid = 0;
+const rid = (p) => `${p}-${Date.now()}-${_rid++}`;
+
+const SEGMENTS = {
+  util: { name: "Utilisatrices", color: "#6b4fa6" },
+  salon: { name: "Salons", color: "#2d7a5f" },
+  b2b: { name: "B2B / API", color: "#1a5c8a" },
+  affil: { name: "Affiliation", color: "#b07d3a" },
+  global: { name: "Global / Expansion", color: "#8b3a6e" },
+};
+
+// Segment par feature, dans l'ordre exact du pitch (source vérifiée).
+const SEG_MATRIX = [
+  ["util", "util", "util", "util", "salon", "salon"],
+  ["util", "util", "util", "util", "util", "salon", "salon", "salon", "salon", "util", "affil", "salon"],
+  ["b2b", "b2b", "b2b", "util", "affil", "salon"],
+  ["global", "global", "global"],
+];
+
+function DEFAULT_ROADMAP() {
+  let pIdx = 0;
+  const P = (phase, features) => {
+    const segs = SEG_MATRIX[pIdx++] || [];
+    return {
+      id: rid("ph"),
+      ...phase,
+      features: features.map(([name, desc], i) => ({ id: rid("ft"), name, desc, seg: segs[i] || null, done: false })),
+    };
+  };
+  return [
+    P(
+      { tag: "Phase 1", title: "MVP", subtitle: "La simulation — le cœur du produit", timeframe: "En construction" },
+      [
+        ["📸 Upload de photo", "L’utilisatrice uploade son selfie ou choisit une photo depuis sa galerie. Prévisualisation instantanée."],
+        ["✂️ Choix du style — portfolio coiffeuse", "Choix parmi les vraies réalisations de la coiffeuse. Elle simule exactement ce que la pro sait faire."],
+        ["🤖 Simulation IA — Fal.ai Flux.1", "Génération IA image-to-image optimisée pour les cheveux texturés. Prompt engineering spécifique afro."],
+        ["🖼️ Résultat avant / après", "Affichage côte à côte de la photo originale et du résultat simulé. Export et partage."],
+        ["👤 Fiche coiffeuse", "Profil de la coiffeuse : photo, salon, spécialités, note, tarifs. Données hardcodées au MVP."],
+        ["🗂️ Portfolio de la coiffeuse", "Galerie des réalisations. Ces photos alimentent les choix de style disponibles dans la simulation."],
+      ]
+    ),
+    P(
+      { tag: "Phase 2", title: "Bientôt", subtitle: "L’écosystème — annuaire, routine, communauté", timeframe: "3–6 mois post-MVP" },
+      [
+        ["🔓 Compte utilisatrice", "Inscription, connexion, profil. Sauvegarde des simulations et historique."],
+        ["💳 Abonnement Plan Crown", "Freemium → Plan Crown (4,99€/mois). Stripe + gestion quotas + webhooks."],
+        ["📚 Bibliothèque de looks", "Sauvegarde et organisation des simulations favorites. Partage en un clic."],
+        ["✂️ Longueur & couleur", "Ajustement post-simulation. Fonctionnalité réservée au Plan Crown."],
+        ["🧶 Demande de mèches", "Demander à la coiffeuse de préparer les mèches avant le RDV. Plan Crown."],
+        ["🗺️ Annuaire géolocalisé", "Toutes les coiffeuses afro autour de l’utilisatrice. Filtres par style, tarif, disponibilité."],
+        ["⭐ Avis & notation", "Avis vérifiés après chaque rendez-vous. Badge « Certifié afro »."],
+        ["📂 Offre Pro Salon", "Essentiel (30€/mois) : portfolio, calendrier. Pro + IA (40€/mois) : catalogue auto-généré, stats, messagerie."],
+        ["📅 Calendrier & prise de RDV", "Réservation intégrée. La simulation est jointe au RDV. Zéro malentendu."],
+        ["🧴 Routine capillaire", "Routine adaptée au style et au type de cheveux. Produits propres en premier — sans pression."],
+        ["🛍️ Affiliation produits", "Suggestions discrètes de produits complémentaires. Commission 5–10%."],
+        ["🤝 Recommandation coiffeuse → coiffeuse", "Système d’invitation. Seule une recommandation permet de rejoindre la plateforme."],
+      ]
+    ),
+    P(
+      { tag: "Phase 3", title: "Futur", subtitle: "B2B — API, widget, expansion USA", timeframe: "An 2–5" },
+      [
+        ["🔌 API Crown On Me", "API de simulation pour les entreprises. Intégration dans leurs propres apps et sites."],
+        ["🪟 Widget / iFrame", "Module clé-en-main à intégrer en 1 ligne de code. White-label disponible."],
+        ["🏢 Plan Entreprise", "Offre sur mesure grandes marques (L’Oréal, SheaMoisture…). Dashboard, SLA, support. 499€+/mois."],
+        ["🇺🇸 Expansion États-Unis", "43M d’Afro-Américains, marché Black Hair Care le plus mature au monde. Anglais, Stripe US, salons locaux."],
+        ["🤝 Partenariats marques", "Intégration marques afro (SheaMoisture, Cantu, Mizani). Co-branding et affiliation avancée."],
+        ["🎓 Formation coiffeuses", "Module de formation en ligne : techniques, tendances, gestion du salon."],
+      ]
+    ),
+    P(
+      { tag: "Phase 4", title: "Expansion globale", subtitle: "Afrique — le marché naturel de Crown On Me", timeframe: "An 5+" },
+      [
+        ["🌍 Afrique francophone", "Côte d’Ivoire, Sénégal, Cameroun, RDC. Adaptation prix, monnaies locales (CFA), salons partenaires."],
+        ["🇳🇬 Afrique anglophone", "Nigeria, Ghana, Kenya. Lagos et Nairobi : hubs startup avec forte culture beauté afro."],
+        ["📱 Version lite — faible connectivité", "Version allégée pour connexions lentes et appareils d’entrée de gamme. PWA + simulation basse résolution."],
+      ]
+    ),
+  ];
+}
+
+const SEG_BY_NAME = (() => {
+  const m = {};
+  DEFAULT_ROADMAP().forEach((p) => p.features.forEach((f) => { if (f.seg) m[f.name] = f.seg; }));
+  return m;
+})();
+
+function migrateRoadmap(phases) {
+  if (!Array.isArray(phases)) return DEFAULT_ROADMAP();
+  return phases.map((p) => ({
+    ...p,
+    features: (p.features || []).map((f) => ({
+      ...f,
+      seg: f.seg !== undefined ? f.seg : (SEG_BY_NAME[f.name] || null),
+    })),
+  }));
+}
+
+function DEFAULT_COMPETITORS() {
+  return {
+    cols: ["Crown On Me", "Zenaba", "L’Oréal Style My Hair"],
+    rows: [
+      { crit: "Positionnement", cells: ["Simulation IA + réservation\nSpécialisé cheveux texturés", "Annuaire / mise en relation\nSpécialisé coiffure afro", "Essai couleur virtuel (AR)\nGrand public — tous types de cheveux"] },
+      { crit: "Simulation IA", cells: ["✓ Oui — IA image-to-image (Fal.ai Flux.1) optimisée cheveux texturés", "✗ Non", "Couleur uniquement (AR Modiface) — pas de simulation de coiffure afro"] },
+      { crit: "Spécialisation afro", cells: ["✓ 100% cheveux texturés — box braids, locks, twist…", "✓ 100% coiffure afro", "✗ Grand public — pas de styles afro spécifiques"] },
+      { crit: "Réservation salon", cells: ["✓ Intégrée — simulation jointe au RDV", "✓ Mise en relation + échange", "Redirection vers salons L’Oréal partenaires"] },
+      { crit: "Portfolio coiffeuses", cells: ["✓ Réalisations réelles = styles de simulation", "✓ Profils vérifiés avec photos", "✗ Catalogue L’Oréal uniquement"] },
+      { crit: "Modèle", cells: ["B2B2C · Freemium + abo", "Marketplace · Commission", "Gratuit · Push produit L’Oréal"] },
+      { crit: "Couverture", cells: ["France (lancement) → USA → Afrique", "France — 400+ coiffeuses", "82 pays — grand public"] },
+    ],
+    edge: "Crown On Me est le seul acteur à combiner simulation IA spécialisée cheveux texturés + connexion directe avec les coiffeuses. Zenaba fait de la mise en relation sans simulation. L’Oréal fait de la simulation couleur généraliste sans spécialisation afro. Aucun ne permet de voir sa coiffure sur sa propre photo ET de réserver la coiffeuse qui la réalise.",
+  };
+}
+
+const HYP_TYPE = {
+  probleme: { name: "Problème", color: "#6b4fa6" },
+  client: { name: "Client", color: "#2d7a5f" },
+  solution: { name: "Solution", color: "#1a5c8a" },
+  business: { name: "Business", color: "#b07d3a" },
+};
+const HYP_STATUS = {
+  atester: { name: "À tester", color: "#8b7355" },
+  encours: { name: "En cours", color: "#c9854a" },
+  valide: { name: "Validé", color: "#2d7a5f" },
+  infirme: { name: "Infirmé", color: "#b5462a" },
+};
+
+function DEFAULT_HYPOTHESES() {
+  const H = (o) => ({ id: rid("hy"), open: false, importance: "high", certainty: "low", ...o });
+  return [
+    H({
+      claim: "La cliente et la coiffeuse ne partagent pas la même référence visuelle avant le RDV — c’est la source principale de déception.",
+      type: "probleme", status: "encours",
+      note: "Validé par expérience fondatrice. Terrain à confirmer via interviews structurées.",
+      method: "Discovery — interviews clientes structurées",
+      next: "Mener des interviews clientes pour confirmer sur le terrain",
+    }),
+    H({
+      claim: "Les coiffeuses afro manquent de vitrine digitale et cherchent à mieux qualifier leurs clientes en amont.",
+      type: "client", status: "encours",
+      note: "Retours terrain positifs.",
+      method: "Discovery — entretiens B2B coiffeuses",
+      next: "Réaliser 5+ entretiens B2B formels",
+    }),
+    H({
+      claim: "Une simulation IA (même imparfaite) suffit à créer une référence commune utile entre cliente et coiffeuse.",
+      type: "solution", status: "encours",
+      note: "Fal.ai / Flux produit des résultats plausibles — pas de test utilisateur réel encore.",
+      method: "Test produit avec des utilisatrices réelles",
+      next: "Organiser un premier test utilisateur",
+    }),
+    H({
+      claim: "Le modèle freemium (5 simulations gratuites) convertit vers Plan Crown 4,99€/mois.",
+      type: "business", status: "atester",
+      note: "Aucune donnée.",
+      method: "Métriques — mesure au lancement MVP",
+      next: "Instrumenter le tunnel de conversion dès le MVP",
+    }),
+  ];
+}
+
+const DRAFT_PITCH_PROBLEME =
+  "Impossible de visualiser une coiffure afro sur soi avant le rendez-vous : cliente et coiffeuse n’ont pas le même référentiel, d’où une déception fréquente sur un budget lourd (200€+/RDV). (Brouillon à affûter.)";
+const DRAFT_CANVAS_PROBLEME =
+  "1. Peur du résultat : impossible de se voir avant le RDV.\n2. Trouver la bonne coiffeuse spécialisée (offre peu visible en ligne).\n3. Communication approximative : référentiel non partagé (Pinterest ≠ résultat réel).";
+const DRAFT_MARCHE =
+  "5M de personnes concernées en France (cheveux texturés, particulièrement afro).\n200€+ dépensés par rendez-vous (box braids, locks, tissage).\n~8K salons afro en France, dont ~200 spécialisés cheveux texturés — offre fragmentée, peu digitalisée.\nSources : estimations INSEE + études communautaires, expérience fondatrice terrain.";
+
+const SEED_PITCH_SOLUTION =
+  "Crown On Me permet de visualiser sa coiffure avant de réserver, grâce à une IA entraînée sur les cheveux texturés. L’utilisatrice uploade sa photo, choisit un style dans le portfolio réel d’une coiffeuse partenaire, et voit le résultat en quelques secondes. Double impact : la cliente ne prend plus de risque, et la coiffeuse gagne une cliente qualifiée avec moins de temps de consultation perdu.";
+const SEED_CANVAS_SOLUTION =
+  "• Simulation IA image-to-image sur cheveux texturés (Fal.ai Flux.1), sur sa propre photo.\n• Portfolio réel des coiffeuses : on ne simule que ce que la pro sait faire.\n• Réservation intégrée : la simulation voyage avec le RDV.";
+const SEED_CANVAS_UVP =
+  "Visualiser sa coiffure afro sur soi avant de réserver, et arriver en salon avec une référence claire. Zéro risque pour la cliente, cliente qualifiée pour la coiffeuse.";
+const SEED_PRODUIT =
+  "Crown On Me est une application mobile et web B2B2C : les coiffeuses fournissent leur portfolio, les utilisatrices simulent et réservent.\n\nLes 6 briques produit :\n- Simulation IA : génération image-to-image (Fal.ai Flux.1) optimisée textures afro (box braids, locks, twist out, balayage…).\n- Portfolio coiffeuses : les styles simulables sont les réalisations réelles des coiffeuses partenaires.\n- Réservation intégrée : calendrier temps réel, rappel 24h, simulation jointe automatiquement au RDV.\n- Annuaire géolocalisé : les coiffeuses afro autour de l’utilisatrice, filtrables par style, tarif, dispo, avis.\n- Demande de mèches : depuis la simulation validée, préparer les mèches en amont.\n- Routine capillaire : après le RDV, une routine adaptée (produits propres d’abord).\n\nParcours utilisatrice (6 étapes) : Découverte de l’app → Upload photo → Choix d’un style (portfolio) → Simulation IA (avant/après) → Validation & sauvegarde → Réservation (la simulation voyage avec le RDV).\n\nStack : FlutterFlow (app) · Fal.ai Flux.1 (IA) · Firebase (back).\n\n→ Le détail des features par phase est dans la Roadmap.";
+
+function applyOneTimeSeeds(st) {
+  if (!st) return st;
+  if (!st.seeds) st.seeds = {};
+  if (!st.seeds.prodsol) {
+    if (st.fields && st.fields.pitch && !String(st.fields.pitch.solution || "").trim()) st.fields.pitch.solution = SEED_PITCH_SOLUTION;
+    if (st.bmc && !String(st.bmc.solution || "").trim()) st.bmc.solution = SEED_CANVAS_SOLUTION;
+    if (st.bmc && !String(st.bmc.uvp || "").trim()) st.bmc.uvp = SEED_CANVAS_UVP;
+    st.seeds.prodsol = true;
+  }
+  if (!st.seeds.journalSB) {
+    if (!Array.isArray(st.journal)) st.journal = [];
+    st.journal.push({
+      id: "seed-sb",
+      ts: new Date(2026, 5, 28).getTime(),
+      section: "levee",
+      kind: "jalon",
+      text: "Sélectionnée pour La Ligue — Startup Banlieue. Premier mentorat confirmé sur le volet « comment scaler ».",
+    });
+    st.seeds.journalSB = true;
+  }
+  return st;
+}
+
+const BMC_BLOCKS = [
+  { key: "probleme", area: "prob", title: "Problème", icon: "❗", tone: "left", q: "Les 1–3 problèmes majeurs à résoudre. Et les alternatives existantes ?" },
+  { key: "solution", area: "sol", title: "Solution", icon: "💡", tone: "left", q: "Les fonctionnalités clés qui répondent à chaque problème." },
+  { key: "metriques", area: "met", title: "Indicateurs clés", icon: "📊", tone: "left", q: "Les chiffres qui te disent que ça marche." },
+  { key: "uvp", area: "uvp", title: "Proposition de valeur unique", icon: "👑", tone: "value", q: "Le message clair et différenciant qui donne envie de t’écouter." },
+  { key: "avantage", area: "adv", title: "Avantage déloyal", icon: "🛡️", tone: "right", q: "Ce qui ne peut être ni acheté ni copié facilement." },
+  { key: "canaux", area: "cha", title: "Canaux", icon: "📡", tone: "right", q: "Tes chemins vers les clients." },
+  { key: "segments", area: "seg", title: "Segments clients", icon: "🙋", tone: "right", q: "Tes clients cibles — et tes premiers early adopters." },
+  { key: "couts", area: "cost", title: "Structure de coûts", icon: "💸", tone: "cost", q: "Coûts d’acquisition, infra, personnes…" },
+  { key: "revenus", area: "rev", title: "Sources de revenus", icon: "💰", tone: "rev", q: "Modèle de revenus, valeur vie client, marge…" },
+];
+const BMC_EMPTY = () => { const o = {}; BMC_BLOCKS.forEach((b) => (o[b.key] = "")); return o; };
+
+// Récupère les données si l'ancien Canvas (BMC) était rempli, en mappant les blocs communs.
+function migrateCanvas(b) {
+  const out = BMC_EMPTY();
+  if (!b || typeof b !== "object") return out;
+  Object.keys(out).forEach((k) => { if (typeof b[k] === "string") out[k] = b[k]; });
+  const map = { valeur: "uvp", segments: "segments", canaux: "canaux", revenus: "revenus", couts: "couts" };
+  Object.entries(map).forEach(([from, to]) => { if (b[from] && !out[to]) out[to] = b[from]; });
+  return out;
+}
+
+function DEFAULT_PRICING() {
+  const T = (o) => ({ id: rid("tr"), featured: false, tag: "", ...o });
+  return {
+    tiers: [
+      T({ cible: "Utilisatrice", name: "Découverte", price: "Gratuit", period: "sans carte bancaire",
+        features: ["Jusqu’à 5 simulations", "Styles de base", "Export pour montrer au coiffeur", "Accès annuaire salons"] }),
+      T({ cible: "Utilisatrice", name: "Crown", price: "4,99€", period: "/mois · ou 44€/an (−25%)", featured: true, tag: "Cœur de cible",
+        features: ["Simulations illimitées", "Modification longueur & couleur", "Bibliothèque de looks", "Demande de mèches coiffeuse", "Réservation intégrée", "Export haute qualité"] }),
+      T({ cible: "Coiffeuse", name: "Pro Salon", price: "39€", period: "/mois",
+        features: ["Portfolio numérique", "Fiche salon géolocalisée", "Calendrier & réservations", "Messagerie clientes", "Stats de visibilité", "Badge Salon certifié"] }),
+      T({ cible: "B2B / API", name: "Entreprise", price: "499€+", period: "/mois · sur devis",
+        features: ["API widget iframe", "Intégration e-commerce beauté", "Apps beauté partenaires", "SLA garanti", "Support dédié"] }),
+    ],
+  };
+}
+
+function DEFAULT_PRODUIT() {
+  const B = (icon, title, desc) => ({ id: rid("br"), icon, title, desc });
+  const S = (icon, title, desc, badge) => ({ id: rid("st"), icon, title, desc, badge });
+  return {
+    intro: "Crown On Me est une application mobile et web B2B2C : les coiffeuses fournissent leur portfolio, les utilisatrices simulent et réservent.",
+    briques: [
+      B("🤖", "Simulation IA", "Génération d’image par IA (Fal.ai Flux.1, image-to-image), optimisée pour les textures afro : box braids, locks, twist out, balayage…"),
+      B("🗂️", "Portfolio coiffeuses", "Les styles simulables sont les réalisations réelles des coiffeuses partenaires. Ce que tu simules, la coiffeuse sait le faire."),
+      B("📅", "Réservation intégrée", "Calendrier en temps réel, rappel 24h, et simulation jointe automatiquement à la réservation."),
+      B("🗺️", "Annuaire géolocalisé", "Toutes les coiffeuses afro autour de l’utilisatrice. Filtres par style, tarif, disponibilité et avis vérifiés."),
+      B("🧶", "Demande de mèches", "Depuis la simulation validée, l’utilisatrice demande à la coiffeuse de préparer les mèches. Zéro surprise le jour J."),
+      B("🧴", "Routine capillaire", "Après le rendez-vous, une routine adaptée à la nouvelle coiffure. L’utilisatrice commence par ses propres produits, sans pression d’achat."),
+    ],
+    parcours: [
+      S("📱", "Découverte de l’app", "Elle trouve Crown On Me via TikTok, une amie ou l’App Store. Accès immédiat, aucune inscription pour démarrer.", "Freemium"),
+      S("📸", "Upload de sa photo", "Un selfie ou une photo de la galerie. Prévisualisation instantanée. La photo est traitée localement, non stockée sans compte.", "Freemium"),
+      S("✂️", "Choix d’un style", "Elle parcourt les vraies réalisations des coiffeuses (box braids, locks, twist out, balayage…), filtrables par style, longueur, coiffeuse.", "Freemium"),
+      S("🤖", "Simulation IA — avant / après", "L’IA génère la coiffure sur sa photo en quelques secondes. Résultat côte à côte avec l’original.", "5 simulations gratuites · sans CB"),
+      S("💾", "Validation & sauvegarde", "Elle valide son look, le sauvegarde dans sa bibliothèque et le partage. Export haute qualité.", "Freemium"),
+      S("📅", "Réservation", "Elle réserve sur le calendrier de la coiffeuse. Le style simulé est joint au RDV, les mèches préparées en amont.", "Plan Crown"),
+    ],
+    stack: ["FlutterFlow", "Fal.ai Flux.1", "Firebase"],
+    notes: "",
+  };
+}
+
+const TECH_SERVICE_STATUS = ["À intégrer", "En cours", "En prod"];
+const TECH_CHANTIER_STATUS = ["À faire", "En cours", "Fait"];
+
+const SEGMENT_TYPES = ["B2C", "B2B", "B2B2C"];
+
+function DEFAULT_SEGPER() {
+  return {
+    segments: [
+      { id: rid("sg"), name: "Utilisatrices", type: "B2C", desc: "Femmes aux cheveux texturés / afro. Simulent leur coiffure et réservent. ~5M concernées en France." },
+      { id: rid("sg"), name: "Salons / coiffeur·euses", type: "B2B", desc: "~8K salons afro en France (~200 spécialisés cheveux texturés). Portfolio en ligne, annuaire, consultation en salon." },
+      { id: rid("sg"), name: "Marques / entreprises (API)", type: "B2B", desc: "Intégration API (widget/iframe), e-commerce beauté, apps beauté partenaires. Offre 499€+/mois." },
+    ],
+    personas: [{ id: rid("pe"), name: "", tagline: "", type: "B2C", context: "", goals: "", pains: "", quote: "" }],
+  };
+}
+
+const SEED_PERSONAS = [
+  {
+    name: "Amara, 22 ans", tagline: "La Découvreuse", type: "B2C",
+    context: "Étudiante, Paris. En transition capillaire depuis 6 mois. Très active sur TikTok (créatrices nappy). Budget beauté 40–60€/mois. Commence en gratuit, convertit sur la preuve.",
+    goals: "Tester des coiffures virtuellement sans risque. Montrer à sa coiffeuse exactement ce qu'elle veut. Partager ses looks sur Instagram/TikTok.",
+    pains: "Peur de mal communiquer avec sa coiffeuse. Passe des heures sur Pinterest sans trouver son style. Budget limité — pas envie de rater une coiffure chère.",
+    quote: "",
+  },
+  {
+    name: "Fatou, 31 ans", tagline: "La Passionnée", type: "B2C",
+    context: "Cadre marketing, Lyon. Cheveux naturels depuis 3 ans. La coiffure est une expression identitaire forte. Payante dès le départ.",
+    goals: "Simuler plusieurs styles avant chaque rendez-vous. Constituer une bibliothèque de ses looks préférés. Prescriptrice — recommande les apps qu'elle aime.",
+    pains: "Change souvent de style, veut tester avant de se lancer. Les apps existantes ne reconnaissent pas les cheveux afro. Manque de références visuelles adaptées à sa texture.",
+    quote: "",
+  },
+  {
+    name: "Nadège, 35 ans", tagline: "La Coiffeuse Pro", type: "B2B2C",
+    context: "Gérante d'un salon afro à Bordeaux. 8 ans d'expérience, 200 clientes régulières. Priorité prospection B2B.",
+    goals: "Vitrine digitale et portfolio en ligne. Acquisition de nouvelles clientes via l'annuaire. Outil de consultation en salon.",
+    pains: "",
+    quote: "",
+  },
+];
+
+function DEFAULT_TECH() {
+  return {
+    stack: "",
+    services: [{ id: rid("sv"), name: "", role: "", status: "À intégrer" }],
+    decisions: [{ id: rid("dc"), decision: "", why: "", date: "" }],
+    chantiers: [{ id: rid("ch"), label: "", status: "À faire" }],
+  };
+}
+
+function buildDefault() {
+  const fields = {};
+  ALL_KEYS.forEach((k) => {
+    const s = SECTIONS[k];
+    if (s.type === "text" || s.type === "finances" || s.type === "concurrents") fields[k] = { body: "" };
+    else if (s.fields) {
+      fields[k] = {};
+      s.fields.forEach(([fk]) => (fields[k][fk] = ""));
+    } else fields[k] = {};
+  });
+  const status = {};
+  ALL_KEYS.forEach((k) => (status[k] = "todo"));
+  return {
+    fields,
+    status,
+    touched: {},
+    captable: [{ holder: "", share: "" }],
+    crm: [{ name: "", type: "", status: "À contacter", next: "" }],
+    finance: { capital: "", months: monthLabels().map((label) => ({ label, revenue: "", expense: "" })) },
+    roadmap: DEFAULT_ROADMAP(),
+    competitors: DEFAULT_COMPETITORS(),
+    hypotheses: DEFAULT_HYPOTHESES(),
+    bmc: BMC_EMPTY(),
+    pricing: DEFAULT_PRICING(),
+    produit: DEFAULT_PRODUIT(),
+    segper: DEFAULT_SEGPER(),
+    tech: DEFAULT_TECH(),
+    seeds: {},
+    journal: [],
+    meetings: [],
+    interviews: [],
+    todos: [],
+  };
+}
+
+const hasStorage =
+  typeof window !== "undefined" && window.storage && typeof window.storage.get === "function";
+
+function prefillEmptyFields(st) {
+  if (!st || !st.fields) return st;
+  const setIfEmpty = (sec, key, val) => {
+    if (st.fields[sec] && (!st.fields[sec][key] || !String(st.fields[sec][key]).trim())) st.fields[sec][key] = val;
+  };
+  setIfEmpty("pitch", "probleme", DRAFT_PITCH_PROBLEME);
+  setIfEmpty("marche", "body", DRAFT_MARCHE);
+  return st;
+}
+
+const eur = (n) =>
+  new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n || 0);
+const num = (v) => {
+  const x = parseFloat(String(v).replace(",", "."));
+  return isNaN(x) ? 0 : x;
+};
+
+/* ---------------- Crown ---------------- */
+function Crown({ pct }) {
+  const n = 7;
+  const W = 210;
+  const baseY = 54;
+  const filled = Math.round((pct / 100) * n);
+  const cxOf = (i) => 22 + i * ((W - 44) / (n - 1));
+  const toothTop = (i) => baseY - (22 + 11 * Math.sin((Math.PI * i) / (n - 1)));
+  return (
+    <svg viewBox={`0 0 ${W} 80`} className="crown" role="img" aria-label={`Couronne remplie à ${pct}%`}>
+      <path d={`M12 ${baseY} L${W - 12} ${baseY} L${W - 18} 74 L18 74 Z`} fill="var(--plum)" stroke="var(--plum-deep)" strokeWidth="1.5" />
+      {Array.from({ length: n }).map((_, i) => {
+        const cx = cxOf(i);
+        const on = i < filled;
+        return (
+          <g key={i}>
+            <polygon
+              points={`${cx - 13},${baseY} ${cx + 13},${baseY} ${cx},${toothTop(i)}`}
+              fill={on ? "var(--gold)" : "var(--band-faint)"}
+              stroke={on ? "var(--gold-deep)" : "var(--band-line)"}
+              strokeWidth="1.4"
+              style={{ transition: "fill .4s ease, stroke .3s ease" }}
+            />
+            <circle cx={cx} cy={toothTop(i) + 4} r="2.8" fill={on ? "var(--gold-deep)" : "var(--band-line)"} />
+          </g>
+        );
+      })}
+      <circle cx={W / 2} cy={64} r="3.2" fill="var(--gold)" />
+    </svg>
+  );
+}
+
+const IMPORT_TARGETS = [
+  { id: "concept", label: "Concept (texte)", kind: "field", sec: "concept", nav: "concept" },
+  { id: "opportunite", label: "Opportunité (texte)", kind: "field", sec: "opportunite", nav: "opportunite" },
+  { id: "marche", label: "Marché (texte)", kind: "field", sec: "marche", nav: "marche" },
+  { id: "strategie", label: "Stratégie (texte)", kind: "field", sec: "strategie", nav: "strategie" },
+  { id: "marketing", label: "Marketing (texte)", kind: "field", sec: "marketing", nav: "marketing" },
+  { id: "risques", label: "Risques & défis (texte)", kind: "field", sec: "risques", nav: "risques" },
+  { id: "traction", label: "Traction (texte)", kind: "field", sec: "traction", nav: "traction" },
+  { id: "produit-notes", label: "Produit — Notes", kind: "produit", nav: "produit" },
+  { id: "concurrents-notes", label: "Concurrents — Notes", kind: "field", sec: "concurrents", nav: "concurrents" },
+  { id: "finances-notes", label: "Finances — Notes", kind: "field", sec: "finances", nav: "finances" },
+  { id: "journal", label: "Journal (nouvelle entrée)", kind: "journal", nav: "journal" },
+];
+
+function App() {
+  const [state, setState] = useState(null);
+  const [active, setActive] = useState("overview");
+  const [saved, setSaved] = useState(true);
+  const [copied, setCopied] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importTarget, setImportTarget] = useState("concept");
+  const [importMode, setImportMode] = useState("append");
+  const saveTimer = useRef(null);
+  const loaded = useRef(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (hasStorage) {
+        try {
+          const res = await window.storage.get(KEY);
+          if (res && res.value && alive) {
+            const merged = { ...buildDefault(), ...JSON.parse(res.value) };
+            merged.roadmap = migrateRoadmap(merged.roadmap);
+            if (!Array.isArray(merged.hypotheses)) merged.hypotheses = DEFAULT_HYPOTHESES();
+            else merged.hypotheses = merged.hypotheses.map((h) => ({ importance: "high", certainty: "low", ...h }));
+            if (!merged.competitors) merged.competitors = DEFAULT_COMPETITORS();
+            merged.bmc = migrateCanvas(merged.bmc);
+            if (!merged.pricing || !Array.isArray(merged.pricing.tiers)) merged.pricing = DEFAULT_PRICING();
+            if (!merged.produit || !Array.isArray(merged.produit.briques)) merged.produit = DEFAULT_PRODUIT();
+            if (!merged.tech || !Array.isArray(merged.tech.services)) merged.tech = DEFAULT_TECH();
+            if (!merged.segper || !Array.isArray(merged.segper.segments)) merged.segper = DEFAULT_SEGPER();
+            if (!Array.isArray(merged.meetings)) merged.meetings = [];
+            if (!Array.isArray(merged.interviews)) merged.interviews = [];
+            if (!Array.isArray(merged.todos)) merged.todos = [];
+            if (!merged.touched || typeof merged.touched !== "object") merged.touched = {};
+            prefillEmptyFields(merged);
+            applyOneTimeSeeds(merged);
+            setState(merged);
+            loaded.current = true;
+            return;
+          }
+        } catch (e) {}
+      }
+      if (alive) {
+        setState(applyOneTimeSeeds(prefillEmptyFields(buildDefault())));
+        loaded.current = true;
+      }
+    })();
+    return () => (alive = false);
+  }, []);
+
+  useEffect(() => {
+    if (!state || !loaded.current) return;
+    setSaved(false);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      if (hasStorage) {
+        try {
+          await window.storage.set(KEY, JSON.stringify(state));
+          setSaved(true);
+        } catch (e) {
+          setSaved(false);
+        }
+      } else setSaved(true);
+    }, 600);
+    return () => saveTimer.current && clearTimeout(saveTimer.current);
+  }, [state]);
+
+  if (!state) {
+    return (
+      <div className="com-root loading">
+        <StyleTag />
+        <div className="spinner" />
+        <p>Chargement de ton cockpit…</p>
+      </div>
+    );
+  }
+
+  const pct = Math.round(
+    (ALL_KEYS.filter((k) => isStarted(state, k)).length / ALL_KEYS.length) * 100
+  );
+
+  const setField = (sec, fk, val) =>
+    setState((p) => ({ ...p, fields: { ...p.fields, [sec]: { ...p.fields[sec], [fk]: val } }, touched: { ...p.touched, [sec]: true } }));
+  const setStatus = (sec, val) => setState((p) => ({ ...p, status: { ...p.status, [sec]: val } }));
+  const addJournal = (e) => setState((p) => ({ ...p, journal: [{ id: Date.now(), ts: Date.now(), ...e }, ...p.journal] }));
+  const delJournal = (id) => setState((p) => ({ ...p, journal: p.journal.filter((x) => x.id !== id) }));
+  const setCap = (rows) => setState((p) => ({ ...p, captable: rows, touched: { ...p.touched, equipe: true } }));
+  const setCrm = (rows) => setState((p) => ({ ...p, crm: rows, touched: { ...p.touched, levee: true } }));
+  const setFinance = (fin) => setState((p) => ({ ...p, finance: fin, touched: { ...p.touched, finances: true } }));
+  const setRoadmap = (rm) => setState((p) => ({ ...p, roadmap: rm, touched: { ...p.touched, roadmap: true } }));
+  const setCompetitors = (c) => setState((p) => ({ ...p, competitors: c, touched: { ...p.touched, concurrents: true } }));
+  const setHypotheses = (h) => setState((p) => ({ ...p, hypotheses: h, touched: { ...p.touched, hypotheses: true } }));
+  const setBmc = (key, val) => setState((p) => ({ ...p, bmc: { ...p.bmc, [key]: val }, touched: { ...p.touched, canvas: true } }));
+  const setPricing = (pr) => setState((p) => ({ ...p, pricing: pr, touched: { ...p.touched, tarification: true } }));
+  const setProduit = (pd) => setState((p) => ({ ...p, produit: pd, touched: { ...p.touched, produit: true } }));
+  const setTech = (tc) => setState((p) => ({ ...p, tech: tc, touched: { ...p.touched, tech: true } }));
+  const setSegper = (sp) => setState((p) => ({ ...p, segper: sp, touched: { ...p.touched, segments: true } }));
+  const setMeetings = (rows) => setState((p) => ({ ...p, meetings: rows }));
+  const setInterviews = (rows) => setState((p) => ({ ...p, interviews: rows }));
+  const setTodos = (rows) => setState((p) => ({ ...p, todos: rows }));
+
+  const go = (k) => {
+    setActive(k);
+    setMenuOpen(false);
+  };
+
+  const copyMarkdown = async () => {
+    try {
+      await navigator.clipboard.writeText(buildMarkdown(state, pct));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch (e) {}
+  };
+
+  const onImportFile = (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => setImportText(String(r.result || ""));
+    r.onerror = () => {};
+    r.readAsText(f);
+  };
+
+  const applyImport = () => {
+    const txt = importText.trim();
+    if (!txt) return;
+    const tgt = IMPORT_TARGETS.find((t) => t.id === importTarget) || IMPORT_TARGETS[0];
+    if (tgt.kind === "journal") {
+      addJournal({ section: "general", kind: "note", text: txt });
+    } else if (tgt.kind === "produit") {
+      const cur = (state.produit && state.produit.notes) || "";
+      const val = importMode === "replace" ? txt : cur ? cur + "\n\n" + txt : txt;
+      setProduit({ ...state.produit, notes: val });
+    } else if (tgt.kind === "field") {
+      const cur = (state.fields[tgt.sec] && state.fields[tgt.sec].body) || "";
+      const val = importMode === "replace" ? txt : cur ? cur + "\n\n" + txt : txt;
+      setField(tgt.sec, "body", val);
+    }
+    setImportOpen(false);
+    setImportText("");
+    setActive(tgt.nav);
+    setMenuOpen(false);
+  };
+
+  return (
+    <div className="com-root">
+      <StyleTag />
+
+      <div className="mobiletop">
+        <button className="burger" onClick={() => setMenuOpen(true)} aria-label="Ouvrir le menu">
+          ☰
+        </button>
+        <span className="mwordmark">Crown On Me</span>
+        <span className="mpct">{pct}%</span>
+      </div>
+
+      {menuOpen && <div className="scrim" onClick={() => setMenuOpen(false)} />}
+
+      <div className="shell">
+        <aside className={"sidebar" + (menuOpen ? " open" : "")}>
+          <div className="sidehead">
+            <Crown pct={pct} />
+            <span className="eyebrow">Cockpit fondatrice</span>
+            <h1 className="wordmark">Crown&nbsp;On&nbsp;Me</h1>
+            <div className="progwrap">
+              <div className="progbar">
+                <div className="progfill" style={{ width: pct + "%" }} />
+              </div>
+              <span className="progtxt">{pct}% couronné</span>
+            </div>
+            <span className="savestate">{saved ? "✓ Enregistré" : "…"}</span>
+          </div>
+
+          <nav className="sidenav">
+            <button className={"navitem ovnav" + (active === "overview" ? " on" : "")} onClick={() => go("overview")}>
+              <span className="navdot star">◧</span>
+              <span className="navlabel">Vue d’ensemble</span>
+            </button>
+            {GROUPS.map((g) => (
+              <div className="navgroup" key={g.title}>
+                <p className="navgrouptitle">{g.title}</p>
+                {g.keys.map((k) => (
+                  <button key={k} className={"navitem " + (isStarted(state, k) ? "st-started" : "st-empty") + (active === k ? " on" : "")} onClick={() => go(k)}>
+                    <span className="navdot" />
+                    <span className="navlabel">{SECTIONS[k].label}</span>
+                  </button>
+                ))}
+              </div>
+            ))}
+            <div className="navgroup">
+              <p className="navgrouptitle">Suivi</p>
+              <button className={"navitem journal" + (active === "journal" ? " on" : "")} onClick={() => go("journal")}>
+                <span className="navdot star">✦</span>
+                <span className="navlabel">Journal</span>
+              </button>
+              <button className={"navitem journal" + (active === "meetings" ? " on" : "")} onClick={() => go("meetings")}>
+                <span className="navdot star">✦</span>
+                <span className="navlabel">Réunions & ateliers</span>
+              </button>
+              <button className={"navitem journal" + (active === "interviews" ? " on" : "")} onClick={() => go("interviews")}>
+                <span className="navdot star">✦</span>
+                <span className="navlabel">Interviews</span>
+              </button>
+            </div>
+          </nav>
+
+          <div className="sidefoot">
+            <button className="mdbtn" onClick={copyMarkdown}>
+              {copied ? "Copié ✓" : "Exporter en Markdown"}
+            </button>
+            <button className="mdbtn importbtn" onClick={() => setImportOpen(true)}>
+              Importer des notes .md
+            </button>
+            <p className="storenote">
+              {hasStorage ? "Sauvegarde auto sur cet appareil." : "Sauvegarde indisponible ici."}
+            </p>
+          </div>
+        </aside>
+
+        <main className="content">
+          {active === "overview" ? (
+            <Overview state={state} pct={pct} go={go} setStatus={setStatus} addJournal={addJournal} setTodos={setTodos} />
+          ) : active === "journal" ? (
+            <JournalView state={state} addJournal={addJournal} delJournal={delJournal} />
+          ) : active === "meetings" ? (
+            <MeetingsView state={state} setMeetings={setMeetings} />
+          ) : active === "interviews" ? (
+            <InterviewsView state={state} setInterviews={setInterviews} />
+          ) : (
+            <SectionView
+              k={active}
+              state={state}
+              setField={setField}
+              setStatus={setStatus}
+              setCap={setCap}
+              setCrm={setCrm}
+              setFinance={setFinance}
+              setRoadmap={setRoadmap}
+              setCompetitors={setCompetitors}
+              setHypotheses={setHypotheses}
+              setBmc={setBmc}
+              setPricing={setPricing}
+              setProduit={setProduit}
+              setTech={setTech}
+              setSegper={setSegper}
+              addJournal={addJournal}
+              delJournal={delJournal}
+            />
+          )}
+        </main>
+      </div>
+
+      {importOpen && (
+        <div className="bmcmodal-scrim" onClick={() => setImportOpen(false)}>
+          <div className="bmcmodal importmodal" onClick={(e) => e.stopPropagation()}>
+            <div className="bmcmodalhead">
+              <span className="bmcicon big">↓</span>
+              <h3>Importer des notes .md</h3>
+              <button className="bmcclose" onClick={() => setImportOpen(false)} aria-label="Fermer">×</button>
+            </div>
+            <p className="bmcmodalq">Choisis un fichier .md (ou colle ton texte), puis dis où ça atterrit. Le contenu arrive tel quel, en texte.</p>
+
+            <label className="implabel">1 · Fichier .md (optionnel)</label>
+            <input type="file" accept=".md,.markdown,.txt,text/markdown,text/plain" onChange={onImportFile} className="impfile" />
+
+            <label className="implabel">2 · Ou colle / édite le texte</label>
+            <textarea className="imptext" rows={7} placeholder="Colle ici le contenu de ta note…" value={importText} onChange={(e) => setImportText(e.target.value)} />
+
+            <div className="improw">
+              <div className="impcol">
+                <label className="implabel">3 · Destination</label>
+                <select value={importTarget} onChange={(e) => setImportTarget(e.target.value)}>
+                  {IMPORT_TARGETS.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+                </select>
+              </div>
+              <div className="impcol">
+                <label className="implabel">4 · Mode</label>
+                <select value={importMode} onChange={(e) => setImportMode(e.target.value)} disabled={importTarget === "journal"}>
+                  <option value="append">Ajouter à la fin</option>
+                  <option value="replace">Remplacer</option>
+                </select>
+              </div>
+            </div>
+            {importTarget === "journal" && <p className="imphint">Le Journal ajoute toujours une nouvelle entrée.</p>}
+
+            <div className="bmcmodalfoot impfoot">
+              <button className="mdbtn" onClick={() => setImportOpen(false)}>Annuler</button>
+              <button className="addbtn" onClick={applyImport} disabled={!importText.trim()}>Importer</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------- Overview (accueil) ---------------- */
+function Overview({ state, pct, go, setStatus, addJournal, setTodos }) {
+  const [cap, setCap] = useState("");
+  const [capKind, setCapKind] = useState("note");
+  const [todoInput, setTodoInput] = useState("");
+  const todos = state.todos || [];
+  const addTodo = () => {
+    if (!todoInput.trim()) return;
+    setTodos([...todos, { id: Date.now(), text: todoInput.trim(), done: false }]);
+    setTodoInput("");
+  };
+  const toggleTodo = (id) => setTodos(todos.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));
+  const delTodo = (id) => setTodos(todos.filter((t) => t.id !== id));
+  const submitCap = () => {
+    if (!cap.trim()) return;
+    addJournal({ section: "general", kind: capKind, text: cap.trim() });
+    setCap("");
+  };
+
+  const startedCount = ALL_KEYS.filter((k) => isStarted(state, k)).length;
+  const emptyCount = ALL_KEYS.length - startedCount;
+  const firstEmpty = ALL_KEYS.find((k) => !isStarted(state, k)) || null;
+  const chantiers = ((state.tech && state.tech.chantiers) || []).filter((c) => c.label && c.status !== "Fait");
+  const hypActions = (state.hypotheses || []).filter((h) => (h.status === "atester" || h.status === "encours") && (h.next || h.claim));
+  const topAction = chantiers.length
+    ? { text: chantiers[0].label, nav: "tech" }
+    : hypActions.length
+    ? { text: hypActions[0].next || hypActions[0].claim, nav: "hypotheses" }
+    : null;
+  const jalons = (state.journal || []).filter((e) => e.kind === "jalon").slice().sort((a, b) => a.ts - b.ts);
+
+  return (
+    <div className="section overview">
+      {/* 1 · Où j'en suis */}
+      <div className="focus">
+        <svg className="donut" viewBox="0 0 56 56" role="img" aria-label={`Avancement ${pct} pour cent`}>
+          <circle cx="28" cy="28" r="22" fill="none" stroke="var(--band-faint)" strokeWidth="5" />
+          <circle cx="28" cy="28" r="22" fill="none" stroke="var(--gold)" strokeWidth="5" strokeLinecap="round" strokeDasharray="138.2" strokeDashoffset={(138.2 * (1 - pct / 100)).toFixed(1)} transform="rotate(-90 28 28)" />
+          <text x="28" y="32" textAnchor="middle" className="donuttext">{pct}%</text>
+        </svg>
+        <div className="focusbody">
+          <h2>Où j’en suis ?</h2>
+          <p className="ovhelp">Ton avancement, et par où continuer.</p>
+          <p className="ovcountline">{startedCount} entamées · {emptyCount} à remplir</p>
+          <div className="focusrow">
+            {firstEmpty ? (
+              <button className="starthere" onClick={() => go(firstEmpty)}>Continuer → {SECTIONS[firstEmpty].label}</button>
+            ) : (
+              <p className="fmuted">Toutes les parties sont entamées.</p>
+            )}
+          </div>
+          {topAction && (
+            <p className="nextaction" onClick={() => go(topAction.nav)}>
+              <span className="nalabel">À faire ensuite</span> {topAction.text}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* 2 · Aujourd'hui */}
+      <div className="today">
+        <div className="todaytop">
+          <span className="todaylabel">Aujourd’hui</span>
+          <span className="todaydate">{formatDateShort(Date.now())}</span>
+        </div>
+        <p className="todayq">Qu’est-ce qui avance ? Qu’est-ce qui bloque ?</p>
+        <textarea className="todayline" rows={2} placeholder="Écris ta ligne du jour…" value={cap} onChange={(e) => setCap(e.target.value)} />
+        <div className="todayrow">
+          <div className="kindtoggle">
+            <button className={capKind === "note" ? "on" : ""} onClick={() => setCapKind("note")}>Note</button>
+            <button className={capKind === "jalon" ? "on jalon" : "jalon"} onClick={() => setCapKind("jalon")}>Jalon</button>
+          </div>
+          <button className="todayadd" onClick={submitCap} disabled={!cap.trim()}>Ajouter</button>
+        </div>
+      </div>
+
+      {/* 3 · Ma to-do */}
+      <div className="todoblock">
+        <div className="todohead">
+          <h3 className="ovblocktitle">Ma to-do</h3>
+          <a className="notionlink" href={NOTION_SB_URL} target="_blank" rel="noopener noreferrer">Startup Banlieue — livrables & tâches (Notion) ↗</a>
+        </div>
+        <div className="todoadd">
+          <input
+            placeholder="Ajouter une tâche…"
+            value={todoInput}
+            onChange={(e) => setTodoInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") addTodo(); }}
+          />
+          <button className="addbtn" onClick={addTodo} disabled={!todoInput.trim()}>Ajouter</button>
+        </div>
+        {todos.length === 0 ? (
+          <p className="empty">Aucune tâche. Ajoute ta première ci-dessus.</p>
+        ) : (
+          <ul className="todolist">
+            {todos.map((t) => (
+              <li className={"todoitem" + (t.done ? " done" : "")} key={t.id}>
+                <button className="todocheck" onClick={() => toggleTodo(t.id)} aria-label={t.done ? "Décocher" : "Cocher"}>{t.done ? "✓" : ""}</button>
+                <span className="todotext" onClick={() => toggleTodo(t.id)}>{t.text}</span>
+                <button className="del" onClick={() => delTodo(t.id)} aria-label="Supprimer">×</button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* 4 · Jalons */}
+      <h3 className="ovblocktitle">Jalons</h3>
+      <p className="ovhelp">Tes caps franchis, dans le temps.</p>
+      {jalons.length === 0 ? (
+        <p className="empty">Aucun jalon pour l’instant. Note une entrée « jalon » ci-dessus et elle apparaîtra ici.</p>
+      ) : (
+        <div className={"frise" + (jalons.length > 1 ? " multi" : "")}>
+          <div className="frisetrack">
+            {jalons.map((e) => (
+              <div className="fstep" key={e.id} onClick={() => go("journal")} title={e.text}>
+                <span className="fdate">{formatDateShort(e.ts)}</span>
+                <span className="fmid"><span className="fdot" /></span>
+                <span className="ftext">{e.text}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------- Section router ---------------- */
+function SectionView({ k, state, setField, setStatus, setCap, setCrm, setFinance, setRoadmap, setCompetitors, setHypotheses, setBmc, setPricing, setProduit, setTech, setSegper, addJournal, delJournal }) {
+  const s = SECTIONS[k];
+  const started = isStarted(state, k);
+  const entries = state.journal.filter((e) => e.section === k);
+
+  return (
+    <div className="section">
+      <div className="sechead">
+        <div>
+          <h2>{s.label}</h2>
+        </div>
+        <span className={"secstate " + (started ? "on" : "")}>{started ? "Entamée" : "À remplir"}</span>
+      </div>
+
+      <div className="guide">
+        <span className="guideicon">?</span>
+        <p>{s.q}</p>
+      </div>
+
+      {s.type === "grid" && <FieldGrid k={k} s={s} vals={state.fields[k]} setField={setField} />}
+      {s.type === "fields" && <FieldStack k={k} s={s} vals={state.fields[k]} setField={setField} />}
+      {s.type === "text" && (
+        <NotesEditor
+          rows={10}
+          placeholder="Écris ici. Pas besoin que ce soit parfait — juste que ce soit posé."
+          value={state.fields[k].body}
+          onChange={(v) => setField(k, "body", v)}
+        />
+      )}
+      {s.type === "finances" && (
+        <FinanceModule
+          fin={state.finance}
+          setFinance={setFinance}
+          notes={state.fields[k].body}
+          setNotes={(v) => setField(k, "body", v)}
+        />
+      )}
+      {s.type === "team" && (
+        <>
+          <FieldStack k={k} s={s} vals={state.fields[k]} setField={setField} />
+          <CapTable rows={state.captable} setRows={setCap} />
+        </>
+      )}
+      {s.type === "levee" && (
+        <>
+          <FieldStack k={k} s={s} vals={state.fields[k]} setField={setField} />
+          <CrmTable rows={state.crm} setRows={setCrm} />
+        </>
+      )}
+      {s.type === "roadmap" && <RoadmapModule phases={state.roadmap || []} setRoadmap={setRoadmap} />}
+      {s.type === "concurrents" && (
+        <CompetitorsModule
+          data={state.competitors || { cols: [], rows: [], edge: "" }}
+          setData={setCompetitors}
+          notes={state.fields[k].body || ""}
+          setNotes={(v) => setField(k, "body", v)}
+        />
+      )}
+      {s.type === "hypotheses" && <HypothesesModule items={state.hypotheses || []} setItems={setHypotheses} />}
+      {s.type === "bmc" && <BMCModule bmc={state.bmc || {}} setBmc={setBmc} />}
+      {s.type === "pricing" && <PricingModule pricing={state.pricing || { tiers: [] }} setPricing={setPricing} />}
+      {s.type === "produit" && <ProduitModule data={state.produit || {}} setData={setProduit} />}
+      {s.type === "segper" && <SegperModule data={state.segper || {}} setData={setSegper} />}
+      {s.type === "tech" && <TechModule data={state.tech || {}} setData={setTech} />}
+
+      <MiniJournal sectionKey={k} entries={entries} addJournal={addJournal} delJournal={delJournal} />
+    </div>
+  );
+}
+
+function FieldGrid({ k, s, vals, setField }) {
+  return (
+    <div className="fieldgrid">
+      {s.fields.map(([fk, label, hint]) => (
+        <div className="field" key={fk}>
+          <label>{label}</label>
+          <NotesEditor rows={3} placeholder={hint} value={vals[fk]} onChange={(v) => setField(k, fk, v)} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FieldStack({ k, s, vals, setField }) {
+  return (
+    <div className="fieldstack">
+      {s.fields.map(([fk, label, hint]) => (
+        <div className="field" key={fk}>
+          <label>{label}</label>
+          <NotesEditor rows={3} placeholder={hint} value={vals[fk]} onChange={(v) => setField(k, fk, v)} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ---------------- Finance module ---------------- */
+function FinanceModule({ fin, setFinance, notes, setNotes }) {
+  const months = fin.months;
+  const capital = num(fin.capital);
+
+  let running = capital;
+  let cumProfit = 0;
+  let beLabel = null;
+  const data = months.map((m) => {
+    const r = num(m.revenue);
+    const e = num(m.expense);
+    running += r - e;
+    cumProfit += r - e;
+    if (beLabel === null && (r || e) && cumProfit >= 0) beLabel = m.label;
+    return { name: m.label || "—", revenue: r, expense: e, cash: Math.round(running) };
+  });
+
+  const totalRev = months.reduce((a, m) => a + num(m.revenue), 0);
+  const totalExp = months.reduce((a, m) => a + num(m.expense), 0);
+  const net = totalRev - totalExp;
+  const hasData = totalRev > 0 || totalExp > 0 || capital > 0;
+
+  const upd = (i, key, v) => setFinance({ ...fin, months: months.map((m, idx) => (idx === i ? { ...m, [key]: v } : m)) });
+  const addMonth = () => {
+    const last = months[months.length - 1];
+    setFinance({ ...fin, months: [...months, { label: last ? last.label + " +" : "Mois", revenue: "", expense: "" }] });
+  };
+  const delMonth = (i) => setFinance({ ...fin, months: months.filter((_, idx) => idx !== i) });
+
+  return (
+    <div className="finance">
+      <div className="statcards">
+        <StatCard label="Capital / apports" value={eur(capital)} tone="capital" />
+        <StatCard label="Revenus totaux" value={eur(totalRev)} tone="rev" />
+        <StatCard label="Dépenses totales" value={eur(totalExp)} tone="exp" />
+        <StatCard label="Résultat net" value={eur(net)} tone={net >= 0 ? "pos" : "neg"} />
+      </div>
+
+      <div className="block chartblock">
+        <div className="blockhead">
+          <h3>Trésorerie & rentabilité</h3>
+          {beLabel && <span className="betag">Break-even : {beLabel}</span>}
+        </div>
+        {hasData ? (
+          <div className="chartwrap">
+            <ResponsiveContainer width="100%" height={280}>
+              <ComposedChart data={data} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid stroke="#e9dcc4" vertical={false} />
+                <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#5c4351" }} tickLine={false} axisLine={{ stroke: "#e3d3bb" }} />
+                <YAxis tick={{ fontSize: 11, fill: "#5c4351" }} tickLine={false} axisLine={false} width={54} tickFormatter={(v) => eur(v)} />
+                <Tooltip formatter={(v, n) => [eur(v), n === "revenue" ? "Revenus" : n === "expense" ? "Dépenses" : "Trésorerie"]} contentStyle={{ borderRadius: 10, border: "1px solid #e3d3bb", fontSize: 12 }} />
+                {beLabel && <ReferenceLine x={beLabel} stroke={CHART.be} strokeDasharray="4 3" label={{ value: "Break-even", fill: CHART.be, fontSize: 11, position: "top" }} />}
+                <Bar dataKey="revenue" name="revenue" fill={CHART.revenue} radius={[3, 3, 0, 0]} maxBarSize={22} />
+                <Bar dataKey="expense" name="expense" fill={CHART.expense} radius={[3, 3, 0, 0]} maxBarSize={22} />
+                <Line type="monotone" dataKey="cash" name="cash" stroke={CHART.cash} strokeWidth={2.4} dot={{ r: 2.5 }} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <p className="empty">Remplis le tableau ci-dessous et le graphe s’anime tout seul.</p>
+        )}
+      </div>
+
+      <div className="block">
+        <div className="blockhead">
+          <h3>Hypothèses mensuelles</h3>
+        </div>
+        <div className="field short capfield">
+          <label htmlFor="fin-capital">Capital initial / apports</label>
+          <input id="fin-capital" inputMode="decimal" placeholder="€" value={fin.capital} onChange={(e) => setFinance({ ...fin, capital: e.target.value })} />
+        </div>
+        <div className="montable">
+          <div className="mrow head">
+            <span>Mois</span>
+            <span>Revenus</span>
+            <span>Dépenses</span>
+            <span>Net</span>
+            <span />
+          </div>
+          {months.map((m, i) => {
+            const netM = num(m.revenue) - num(m.expense);
+            return (
+              <div className="mrow" key={i}>
+                <input className="mlabel" value={m.label} onChange={(e) => upd(i, "label", e.target.value)} />
+                <input inputMode="decimal" placeholder="0" value={m.revenue} onChange={(e) => upd(i, "revenue", e.target.value)} />
+                <input inputMode="decimal" placeholder="0" value={m.expense} onChange={(e) => upd(i, "expense", e.target.value)} />
+                <span className={"mnet " + (netM >= 0 ? "pos" : "neg")}>{eur(netM)}</span>
+                <button className="del" onClick={() => delMonth(i)} aria-label="Supprimer le mois">×</button>
+              </div>
+            );
+          })}
+        </div>
+        <button className="addrow" onClick={addMonth}>+ Ajouter un mois</button>
+      </div>
+
+      <div className="block">
+        <div className="blockhead"><h3>Notes financières</h3></div>
+        <NotesEditor rows={4} placeholder="Postes de coûts, hypothèses de croissance, besoin en capital et à quoi il sert…" value={notes} onChange={(v) => setNotes(v)} />
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ label, value, tone }) {
+  return (
+    <div className={"statcard tone-" + tone}>
+      <span className="statlabel">{label}</span>
+      <span className="statvalue">{value}</span>
+    </div>
+  );
+}
+
+/* ---------------- Roadmap ---------------- */
+function RoadmapModule({ phases, setRoadmap }) {
+  const [edit, setEdit] = useState(false);
+  const [open, setOpen] = useState({}); // featureId -> bool
+  const [sel, setSel] = useState("all"); // "all" | phaseId
+
+  const totalF = phases.reduce((a, p) => a + p.features.length, 0);
+  const doneF = phases.reduce((a, p) => a + p.features.filter((f) => f.done).length, 0);
+
+  const patchPhase = (pid, patch) => setRoadmap(phases.map((p) => (p.id === pid ? { ...p, ...patch } : p)));
+  const patchFeature = (pid, fid, patch) =>
+    setRoadmap(
+      phases.map((p) =>
+        p.id === pid ? { ...p, features: p.features.map((f) => (f.id === fid ? { ...f, ...patch } : f)) } : p
+      )
+    );
+  const addFeature = (pid) =>
+    setRoadmap(
+      phases.map((p) =>
+        p.id === pid ? { ...p, features: [...p.features, { id: rid("ft"), name: "Nouvelle feature", desc: "", seg: null, done: false }] } : p
+      )
+    );
+  const delFeature = (pid, fid) =>
+    setRoadmap(phases.map((p) => (p.id === pid ? { ...p, features: p.features.filter((f) => f.id !== fid) } : p)));
+  const addPhase = () =>
+    setRoadmap([...phases, { id: rid("ph"), tag: "Phase " + (phases.length + 1), title: "Nouvelle phase", subtitle: "", timeframe: "", features: [] }]);
+  const delPhase = (pid) => {
+    if (sel === pid) setSel("all");
+    setRoadmap(phases.filter((p) => p.id !== pid));
+  };
+  const toggleOpen = (fid) => setOpen((o) => ({ ...o, [fid]: !o[fid] }));
+
+  const shown = sel === "all" ? phases : phases.filter((p) => p.id === sel);
+  const usedSegs = Array.from(new Set(phases.flatMap((p) => p.features.map((f) => f.seg).filter(Boolean))));
+
+  return (
+    <div className="roadmap">
+      <div className="rmbar">
+        <span className="rmcount">
+          {doneF}/{totalF} features · {phases.length} phases
+        </span>
+        <button className={"rmedit" + (edit ? " on" : "")} onClick={() => setEdit((e) => !e)}>
+          {edit ? "Terminé" : "Éditer"}
+        </button>
+      </div>
+
+      {/* Timeline chronologique */}
+      <div className="rmtimeline">
+        <button className={"tlall" + (sel === "all" ? " on" : "")} onClick={() => setSel("all")}>
+          Toutes
+        </button>
+        <div className="tlaxis">
+          {phases.map((p) => {
+            const pd = p.features.length && p.features.every((f) => f.done);
+            return (
+              <button key={p.id} className={"tlnode" + (sel === p.id ? " on" : "") + (pd ? " done" : "")} onClick={() => setSel(p.id)}>
+                <span className="tldot" />
+                <span className="tltag">{p.tag}</span>
+                {p.timeframe && <span className="tltime">{p.timeframe}</span>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Légende segments */}
+      {usedSegs.length > 0 && (
+        <div className="seglegend">
+          {usedSegs.map((k) => {
+            const seg = SEGMENTS[k];
+            if (!seg) return null;
+            return (
+              <span key={k} className="segchip" style={{ color: seg.color, borderColor: seg.color + "55", background: seg.color + "14" }}>
+                {seg.name}
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      {shown.map((p) => {
+        const pi = phases.indexOf(p);
+        const pDone = p.features.length && p.features.every((f) => f.done);
+        return (
+          <div className={"phase" + (pDone ? " complete" : "")} key={p.id}>
+            <div className="phasehead">
+              <span className="phasenum">{pi + 1}</span>
+              {edit ? (
+                <div className="phaseedit">
+                  <input className="ptag" value={p.tag} placeholder="Phase" onChange={(e) => patchPhase(p.id, { tag: e.target.value })} />
+                  <input className="ptitle" value={p.title} placeholder="Titre" onChange={(e) => patchPhase(p.id, { title: e.target.value })} />
+                  <input className="psub" value={p.subtitle} placeholder="Sous-titre" onChange={(e) => patchPhase(p.id, { subtitle: e.target.value })} />
+                  <input className="ptime" value={p.timeframe} placeholder="Horizon (ex. 3–6 mois)" onChange={(e) => patchPhase(p.id, { timeframe: e.target.value })} />
+                  <button className="del phasedel" onClick={() => delPhase(p.id)} aria-label="Supprimer la phase">×</button>
+                </div>
+              ) : (
+                <div className="phaseinfo">
+                  <div className="phasetop">
+                    <span className="ptagchip">{p.tag}</span>
+                    <h3>{p.title}</h3>
+                    {p.timeframe && <span className="ptimechip">{p.timeframe}</span>}
+                  </div>
+                  {p.subtitle && <p className="psubtxt">{p.subtitle}</p>}
+                  <div className="phasebar">
+                    <div
+                      className="phasefill"
+                      style={{ width: (p.features.length ? (p.features.filter((f) => f.done).length / p.features.length) * 100 : 0) + "%" }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <ul className="features">
+              {p.features.map((f) => {
+                const seg = f.seg ? SEGMENTS[f.seg] : null;
+                return (
+                  <li className={"feature" + (f.done ? " done" : "") + (open[f.id] ? " open" : "")} key={f.id}>
+                    <div className="featurerow">
+                      <button
+                        className={"donedot" + (f.done ? " on" : "")}
+                        onClick={() => patchFeature(p.id, f.id, { done: !f.done })}
+                        aria-label={f.done ? "Marquer non fait" : "Marquer fait"}
+                        title={f.done ? "Fait" : "À faire"}
+                      >
+                        {f.done ? "✓" : ""}
+                      </button>
+                      {edit ? (
+                        <input className="fname" value={f.name} onChange={(e) => patchFeature(p.id, f.id, { name: e.target.value })} />
+                      ) : (
+                        <button className="fname btn" onClick={() => toggleOpen(f.id)}>
+                          <span className="fnametext">{f.name}</span>
+                          {seg && (
+                            <span className="segchip mini" style={{ color: seg.color, borderColor: seg.color + "55", background: seg.color + "14" }}>
+                              {seg.name}
+                            </span>
+                          )}
+                          <span className="chev">{open[f.id] ? "−" : "+"}</span>
+                        </button>
+                      )}
+                      {edit && (
+                        <button className="del" onClick={() => delFeature(p.id, f.id)} aria-label="Supprimer la feature">×</button>
+                      )}
+                    </div>
+                    {edit ? (
+                      <div className="feditrow">
+                        <select className="segselect" value={f.seg || ""} onChange={(e) => patchFeature(p.id, f.id, { seg: e.target.value || null })}>
+                          <option value="">Sans segment</option>
+                          {Object.entries(SEGMENTS).map(([kk, v]) => (
+                            <option key={kk} value={kk}>{v.name}</option>
+                          ))}
+                        </select>
+                        <textarea
+                          className="fdesc-edit"
+                          rows={2}
+                          placeholder="Description de la feature…"
+                          value={f.desc}
+                          onChange={(e) => patchFeature(p.id, f.id, { desc: e.target.value })}
+                        />
+                      </div>
+                    ) : (
+                      open[f.id] && <p className="fdesc">{f.desc || "Pas encore de description."}</p>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+
+            {edit && (
+              <button className="addrow" onClick={() => addFeature(p.id)}>
+                + Ajouter une feature
+              </button>
+            )}
+          </div>
+        );
+      })}
+
+      {edit && (
+        <button className="addphase" onClick={addPhase}>
+          + Ajouter une phase
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ---------------- Competitors ---------------- */
+function CompetitorsModule({ data, setData, notes, setNotes }) {
+  const [edit, setEdit] = useState(false);
+  const cols = data.cols || [];
+  const rows = data.rows || [];
+
+  const setCol = (ci, v) => setData({ ...data, cols: cols.map((c, i) => (i === ci ? v : c)) });
+  const setCell = (ri, ci, v) =>
+    setData({ ...data, rows: rows.map((r, i) => (i === ri ? { ...r, cells: r.cells.map((c, j) => (j === ci ? v : c)) } : r)) });
+  const setCrit = (ri, v) => setData({ ...data, rows: rows.map((r, i) => (i === ri ? { ...r, crit: v } : r)) });
+  const addCol = () =>
+    setData({ ...data, cols: [...cols, "Concurrent"], rows: rows.map((r) => ({ ...r, cells: [...r.cells, ""] })) });
+  const delCol = (ci) =>
+    setData({ ...data, cols: cols.filter((_, i) => i !== ci), rows: rows.map((r) => ({ ...r, cells: r.cells.filter((_, j) => j !== ci) })) });
+  const addRow = () => setData({ ...data, rows: [...rows, { crit: "Nouveau critère", cells: cols.map(() => "") }] });
+  const delRow = (ri) => setData({ ...data, rows: rows.filter((_, i) => i !== ri) });
+
+  return (
+    <div className="competitors">
+      <div className="rmbar">
+        <span className="rmcount">{cols.length} acteurs · {rows.length} critères</span>
+        <button className={"rmedit" + (edit ? " on" : "")} onClick={() => setEdit((e) => !e)}>
+          {edit ? "Terminé" : "Éditer"}
+        </button>
+      </div>
+
+      <div className="cmpscroll">
+        <table className="cmptable">
+          <thead>
+            <tr>
+              <th className="critcol">Critère</th>
+              {cols.map((c, ci) => (
+                <th key={ci} className={ci === 0 ? "uscol" : ""}>
+                  {edit ? (
+                    <div className="thedit">
+                      <input value={c} onChange={(e) => setCol(ci, e.target.value)} />
+                      {cols.length > 1 && (
+                        <button className="del" onClick={() => delCol(ci)} aria-label="Retirer ce concurrent">×</button>
+                      )}
+                    </div>
+                  ) : (
+                    <span>{c}</span>
+                  )}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, ri) => (
+              <tr key={ri}>
+                <th scope="row" className="critcol">
+                  {edit ? (
+                    <div className="thedit">
+                      <input value={r.crit} onChange={(e) => setCrit(ri, e.target.value)} />
+                      <button className="del" onClick={() => delRow(ri)} aria-label="Retirer ce critère">×</button>
+                    </div>
+                  ) : (
+                    r.crit
+                  )}
+                </th>
+                {r.cells.map((cell, ci) => (
+                  <td key={ci} className={ci === 0 ? "uscol" : ""}>
+                    {edit ? (
+                      <textarea rows={2} value={cell} onChange={(e) => setCell(ri, ci, e.target.value)} />
+                    ) : (
+                      <span className="cellval">{cell}</span>
+                    )}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {edit && (
+        <div className="cmpbtns">
+          <button className="addrow" onClick={addRow}>+ Critère</button>
+          <button className="addrow" onClick={addCol}>+ Concurrent</button>
+        </div>
+      )}
+
+      <div className="edge">
+        <span className="edgeicon">★</span>
+        <div className="edgebody">
+          <p className="edgelabel">Avantage différenciateur</p>
+          {edit ? (
+            <textarea rows={4} value={data.edge || ""} onChange={(e) => setData({ ...data, edge: e.target.value })} />
+          ) : (
+            <p className="edgetext">{data.edge}</p>
+          )}
+        </div>
+      </div>
+
+      <div className="block">
+        <div className="blockhead"><h3>Notes concurrence</h3></div>
+        <NotesEditor rows={3} placeholder="Veille, nouveaux entrants, angles à creuser…" value={notes} onChange={(v) => setNotes(v)} />
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Hypotheses ---------------- */
+function HypothesesModule({ items, setItems }) {
+  const [filter, setFilter] = useState("all");
+
+  const patch = (id, p) => setItems(items.map((h) => (h.id === id ? { ...h, ...p } : h)));
+  const add = () =>
+    setItems([
+      ...items,
+      { id: rid("hy"), open: true, claim: "", type: "probleme", status: "atester", importance: "high", certainty: "low", note: "", method: "", next: "" },
+    ]);
+  const del = (id) => setItems(items.filter((h) => h.id !== id));
+
+  const counts = { valide: 0, encours: 0, atester: 0, infirme: 0 };
+  items.forEach((h) => { if (counts[h.status] !== undefined) counts[h.status]++; });
+  const shown = filter === "all" ? items : items.filter((h) => h.status === filter);
+
+  return (
+    <div className="hyp">
+      <div className="amap">
+        <div className="amaphead">
+          <h3>Carte des assomptions</h3>
+          <span className="amaphint">Chaque hypothèse se place selon son importance et ta certitude.</span>
+        </div>
+        <div className="amapwrap">
+          <div className="amapy">Importance ↑</div>
+          <div className="amapmain">
+            <div className="amapgrid">
+              {[
+                { imp: "high", cert: "low", label: "À tester en priorité", sub: "risque élevé", prio: true },
+                { imp: "high", cert: "high", label: "Solides", sub: "pas prioritaires" },
+                { imp: "low", cert: "low", label: "Faible impact", sub: "plus tard" },
+                { imp: "low", cert: "high", label: "Sûres", sub: "peu de risque" },
+              ].map((q) => {
+                const inCell = items.filter((h) => (h.importance || "high") === q.imp && (h.certainty || "low") === q.cert);
+                return (
+                  <div className={"amapcell" + (q.prio ? " prio" : "")} key={q.imp + q.cert}>
+                    <div className="amapqlabel">{q.label} <span>· {q.sub}</span></div>
+                    <div className="amapchips">
+                      {inCell.length === 0 ? (
+                        <span className="amapempty">—</span>
+                      ) : (
+                        inCell.map((h) => (
+                          <button className="achip" key={h.id} title={h.claim} onClick={() => { setFilter("all"); patch(h.id, { open: true }); }}>
+                            {h.claim ? (h.claim.length > 34 ? h.claim.slice(0, 34) + "…" : h.claim) : "Sans énoncé"}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="amapx">Certitude →</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="rmbar">
+        <span className="rmcount">
+          {items.length} hypothèses · {counts.valide} validées · {counts.encours} en cours
+        </span>
+        <button className="addrow" onClick={add}>+ Hypothèse</button>
+      </div>
+
+      <div className="filterbar">
+        <button className={filter === "all" ? "on" : ""} onClick={() => setFilter("all")}>Toutes</button>
+        {Object.entries(HYP_STATUS).map(([k, v]) => (
+          <button key={k} className={filter === k ? "on" : ""} onClick={() => setFilter(k)}>{v.name}</button>
+        ))}
+      </div>
+
+      {shown.length === 0 && <p className="empty">Aucune hypothèse dans ce filtre.</p>}
+
+      {shown.map((h) => {
+        const typ = HYP_TYPE[h.type];
+        const stt = HYP_STATUS[h.status];
+        return (
+          <div className="hcard" key={h.id} style={{ borderLeftColor: stt ? stt.color : "var(--stone)" }}>
+            <div className="hhead">
+              {stt && (
+                <span className="hstat" style={{ color: stt.color, borderColor: stt.color + "55", background: stt.color + "14" }}>
+                  {stt.name}
+                </span>
+              )}
+              {typ && (
+                <span className="htype" style={{ color: typ.color, borderColor: typ.color + "55", background: typ.color + "14" }}>
+                  {typ.name}
+                </span>
+              )}
+              <button className="hclaimbtn" onClick={() => patch(h.id, { open: !h.open })}>
+                <span className="hclaimtext">{h.claim || "Nouvelle hypothèse — clique pour éditer"}</span>
+                <span className="chev">{h.open ? "−" : "+"}</span>
+              </button>
+            </div>
+
+            {h.open && (
+              <div className="hbody">
+                <div className="field">
+                  <label>Énoncé — « Nous supposons que… »</label>
+                  <textarea rows={2} value={h.claim} placeholder="Ex. Les clientes ont peur du résultat avant le RDV" onChange={(e) => patch(h.id, { claim: e.target.value })} />
+                </div>
+                <div className="hselrow">
+                  <div className="field">
+                    <label>Type</label>
+                    <select value={h.type} onChange={(e) => patch(h.id, { type: e.target.value })}>
+                      {Object.entries(HYP_TYPE).map(([k, v]) => <option key={k} value={k}>{v.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Statut</label>
+                    <select value={h.status} onChange={(e) => patch(h.id, { status: e.target.value })}>
+                      {Object.entries(HYP_STATUS).map(([k, v]) => <option key={k} value={k}>{v.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="hselrow">
+                  <div className="field">
+                    <label>Importance</label>
+                    <select value={h.importance || "high"} onChange={(e) => patch(h.id, { importance: e.target.value })}>
+                      <option value="high">Élevée</option>
+                      <option value="low">Faible</option>
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Certitude</label>
+                    <select value={h.certainty || "low"} onChange={(e) => patch(h.id, { certainty: e.target.value })}>
+                      <option value="high">Élevée</option>
+                      <option value="low">Faible</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="field">
+                  <label>Méthode de validation</label>
+                  <textarea rows={2} value={h.method} placeholder="Discovery (interviews) · test produit · métriques…" onChange={(e) => patch(h.id, { method: e.target.value })} />
+                </div>
+                <div className="field">
+                  <label>Note / ce qu’on sait déjà</label>
+                  <textarea rows={2} value={h.note} placeholder="Signaux, données, retours terrain…" onChange={(e) => patch(h.id, { note: e.target.value })} />
+                </div>
+                <div className="field">
+                  <label>Prochaine action</label>
+                  <textarea rows={2} value={h.next} placeholder="La prochaine étape concrète pour creuser" onChange={(e) => patch(h.id, { next: e.target.value })} />
+                </div>
+                <button className="del hdel" onClick={() => del(h.id)} aria-label="Supprimer l’hypothèse">Supprimer</button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ---------------- Business Model Canvas ---------------- */
+function BMCModule({ bmc, setBmc }) {
+  const [sel, setSel] = useState(null);
+  const block = sel ? BMC_BLOCKS.find((b) => b.key === sel) : null;
+  const filledCount = BMC_BLOCKS.filter((b) => (bmc[b.key] || "").trim()).length;
+
+  return (
+    <div className="bmc">
+      <div className="rmbar">
+        <span className="rmcount">{filledCount}/9 blocs remplis</span>
+        <span className="bmchint">Clique un bloc pour l’ouvrir</span>
+      </div>
+
+      <div className="bmcgrid">
+        {BMC_BLOCKS.map((b) => {
+          const val = (bmc[b.key] || "").trim();
+          return (
+            <button
+              key={b.key}
+              className={"bmccell area-" + b.area + " tone-" + b.tone + (val ? " filled" : "")}
+              onClick={() => setSel(b.key)}
+            >
+              <span className="bmctop">
+                <span className="bmcicon">{b.icon}</span>
+                <span className="bmctitle">{b.title}</span>
+              </span>
+              {val ? <span className="bmcpreview">{val}</span> : <span className="bmcempty">À remplir</span>}
+            </button>
+          );
+        })}
+      </div>
+
+      {block && (
+        <div className="bmcmodal-scrim" onClick={() => setSel(null)}>
+          <div className={"bmcmodal tone-" + block.tone} onClick={(e) => e.stopPropagation()}>
+            <div className="bmcmodalhead">
+              <span className="bmcicon big">{block.icon}</span>
+              <h3>{block.title}</h3>
+              <button className="bmcclose" onClick={() => setSel(null)} aria-label="Fermer">×</button>
+            </div>
+            <p className="bmcmodalq">{block.q}</p>
+            <textarea
+              className="bmcmodaltext"
+              rows={8}
+              autoFocus
+              placeholder="Écris ici…"
+              value={bmc[block.key] || ""}
+              onChange={(e) => setBmc(block.key, e.target.value)}
+            />
+            <div className="bmcmodalfoot">
+              <button className="addbtn" onClick={() => setSel(null)}>Fermer</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------- Pricing ---------------- */
+function PricingModule({ pricing, setPricing }) {
+  const [edit, setEdit] = useState(false);
+  const tiers = pricing.tiers || [];
+
+  const patch = (id, p) => setPricing({ ...pricing, tiers: tiers.map((t) => (t.id === id ? { ...t, ...p } : t)) });
+  const setFeat = (id, fi, v) => patch(id, { features: tiers.find((t) => t.id === id).features.map((f, i) => (i === fi ? v : f)) });
+  const addFeat = (id) => patch(id, { features: [...tiers.find((t) => t.id === id).features, ""] });
+  const delFeat = (id, fi) => patch(id, { features: tiers.find((t) => t.id === id).features.filter((_, i) => i !== fi) });
+  const addTier = () =>
+    setPricing({ ...pricing, tiers: [...tiers, { id: rid("tr"), cible: "", name: "Nouveau palier", price: "", period: "", featured: false, tag: "", features: [""] }] });
+  const delTier = (id) => setPricing({ ...pricing, tiers: tiers.filter((t) => t.id !== id) });
+
+  return (
+    <div className="pricing">
+      <div className="rmbar">
+        <span className="rmcount">{tiers.length} paliers</span>
+        <button className={"rmedit" + (edit ? " on" : "")} onClick={() => setEdit((e) => !e)}>
+          {edit ? "Terminé" : "Éditer"}
+        </button>
+      </div>
+
+      <div className="pricegrid">
+        {tiers.map((t) => (
+          <div className={"pricecard" + (t.featured ? " featured" : "")} key={t.id}>
+            {edit ? (
+              <div className="priceedit">
+                <label>Cible</label>
+                <input value={t.cible} onChange={(e) => patch(t.id, { cible: e.target.value })} placeholder="Utilisatrice, Coiffeuse…" />
+                <label>Nom du palier</label>
+                <input value={t.name} onChange={(e) => patch(t.id, { name: e.target.value })} />
+                <label>Prix</label>
+                <input value={t.price} onChange={(e) => patch(t.id, { price: e.target.value })} placeholder="4,99€ / Gratuit / sur devis" />
+                <label>Détail prix</label>
+                <input value={t.period} onChange={(e) => patch(t.id, { period: e.target.value })} placeholder="/mois · 44€/an…" />
+                <label className="featline">
+                  <input type="checkbox" checked={t.featured} onChange={(e) => patch(t.id, { featured: e.target.checked })} />
+                  Mettre en avant
+                </label>
+                {t.featured && (
+                  <>
+                    <label>Badge</label>
+                    <input value={t.tag} onChange={(e) => patch(t.id, { tag: e.target.value })} placeholder="Cœur de cible…" />
+                  </>
+                )}
+                <label>Avantages</label>
+                {t.features.map((f, i) => (
+                  <div className="featrow" key={i}>
+                    <input value={f} onChange={(e) => setFeat(t.id, i, e.target.value)} />
+                    <button className="del" onClick={() => delFeat(t.id, i)} aria-label="Retirer">×</button>
+                  </div>
+                ))}
+                <button className="addrow" onClick={() => addFeat(t.id)}>+ Avantage</button>
+                <button className="del tierdel" onClick={() => delTier(t.id)}>Supprimer ce palier</button>
+              </div>
+            ) : (
+              <>
+                {t.featured && t.tag && <span className="pricetag">{t.tag}</span>}
+                {t.cible && <p className="pricecible">{t.cible}</p>}
+                <h3 className="pricename">{t.name}</h3>
+                <p className="priceval">
+                  {t.price}
+                  {t.period && <span className="priceper"> {t.period}</span>}
+                </p>
+                <ul className="pricefeatures">
+                  {t.features.filter(Boolean).map((f, i) => (
+                    <li key={i}>{f}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {edit && (
+        <button className="addphase" onClick={addTier}>+ Ajouter un palier</button>
+      )}
+    </div>
+  );
+}
+
+/* ---------------- Produit ---------------- */
+function ProduitModule({ data, setData }) {
+  const [edit, setEdit] = useState(false);
+  const briques = data.briques || [];
+  const parcours = data.parcours || [];
+  const stack = data.stack || [];
+
+  const upd = (patch) => setData({ ...data, ...patch });
+  const updBrique = (id, p) => upd({ briques: briques.map((b) => (b.id === id ? { ...b, ...p } : b)) });
+  const addBrique = () => upd({ briques: [...briques, { id: rid("br"), icon: "◆", title: "Nouvelle brique", desc: "" }] });
+  const delBrique = (id) => upd({ briques: briques.filter((b) => b.id !== id) });
+  const updStep = (id, p) => upd({ parcours: parcours.map((s) => (s.id === id ? { ...s, ...p } : s)) });
+  const addStep = () => upd({ parcours: [...parcours, { id: rid("st"), icon: "◆", title: "Nouvelle étape", desc: "", badge: "" }] });
+  const delStep = (id) => upd({ parcours: parcours.filter((s) => s.id !== id) });
+  const setStackItem = (i, v) => upd({ stack: stack.map((s, idx) => (idx === i ? v : s)) });
+
+  return (
+    <div className="produit">
+      <div className="rmbar">
+        <span className="rmcount">{briques.length} briques · {parcours.length} étapes</span>
+        <button className={"rmedit" + (edit ? " on" : "")} onClick={() => setEdit((e) => !e)}>
+          {edit ? "Terminé" : "Éditer"}
+        </button>
+      </div>
+
+      {edit ? (
+        <textarea className="prodintro-edit" rows={2} value={data.intro || ""} placeholder="Phrase d’intro…" onChange={(e) => upd({ intro: e.target.value })} />
+      ) : (
+        data.intro && <p className="prodintro">{data.intro}</p>
+      )}
+
+      <p className="prodsub">Les briques produit</p>
+      <div className="briques">
+        {briques.map((b) => (
+          <div className="brique" key={b.id}>
+            {edit ? (
+              <div className="briqueedit">
+                <div className="briquehead">
+                  <input className="bicon" value={b.icon} onChange={(e) => updBrique(b.id, { icon: e.target.value })} />
+                  <input className="btitle" value={b.title} onChange={(e) => updBrique(b.id, { title: e.target.value })} />
+                  <button className="del" onClick={() => delBrique(b.id)} aria-label="Retirer">×</button>
+                </div>
+                <textarea rows={2} value={b.desc} onChange={(e) => updBrique(b.id, { desc: e.target.value })} />
+              </div>
+            ) : (
+              <>
+                <span className="briqueicon">{b.icon}</span>
+                <span className="briquetitle">{b.title}</span>
+                <span className="briquedesc">{b.desc}</span>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+      {edit && <button className="addrow" onClick={addBrique}>+ Brique</button>}
+
+      <p className="prodsub">Le parcours utilisateur</p>
+      <ol className="parcours">
+        {parcours.map((s, i) => (
+          <li className="pstep" key={s.id}>
+            <span className="pnum">{i + 1}</span>
+            <div className="pbody">
+              {edit ? (
+                <div className="stepedit">
+                  <div className="stephead">
+                    <input className="bicon" value={s.icon} onChange={(e) => updStep(s.id, { icon: e.target.value })} />
+                    <input className="btitle" value={s.title} onChange={(e) => updStep(s.id, { title: e.target.value })} />
+                    <button className="del" onClick={() => delStep(s.id)} aria-label="Retirer">×</button>
+                  </div>
+                  <textarea rows={2} value={s.desc} onChange={(e) => updStep(s.id, { desc: e.target.value })} />
+                  <input className="pbadgein" value={s.badge || ""} placeholder="Badge (Freemium, Plan Crown…)" onChange={(e) => updStep(s.id, { badge: e.target.value })} />
+                </div>
+              ) : (
+                <>
+                  <div className="ptop">
+                    <span className="picon">{s.icon}</span>
+                    <span className="ptitle">{s.title}</span>
+                    {s.badge && <span className="pbadge">{s.badge}</span>}
+                  </div>
+                  <span className="pdesc">{s.desc}</span>
+                </>
+              )}
+            </div>
+          </li>
+        ))}
+      </ol>
+      {edit && <button className="addrow" onClick={addStep}>+ Étape</button>}
+
+      <p className="prodsub">Stack</p>
+      {edit ? (
+        <div className="stackedit">
+          {stack.map((s, i) => (
+            <div className="featrow" key={i}>
+              <input value={s} onChange={(e) => setStackItem(i, e.target.value)} />
+              <button className="del" onClick={() => upd({ stack: stack.filter((_, idx) => idx !== i) })} aria-label="Retirer">×</button>
+            </div>
+          ))}
+          <button className="addrow" onClick={() => upd({ stack: [...stack, ""] })}>+ Techno</button>
+        </div>
+      ) : (
+        <div className="stackchips">
+          {stack.filter(Boolean).map((s, i) => <span className="stackchip" key={i}>{s}</span>)}
+        </div>
+      )}
+
+      <div className="block">
+        <div className="blockhead"><h3>Notes</h3></div>
+        <NotesEditor rows={3} placeholder="Tout ce qui ne rentre pas dans les cartes : POC en cours, décisions techniques, TODO…" value={data.notes || ""} onChange={(v) => upd({ notes: v })} />
+      </div>
+
+      <p className="prodrenvoi">→ Le détail des features par phase est dans la <strong>Roadmap</strong>.</p>
+    </div>
+  );
+}
+
+/* ---------------- Segments & personas ---------------- */
+function SegperModule({ data, setData }) {
+  const segments = data.segments || [];
+  const personas = data.personas || [];
+  const upd = (patch) => setData({ ...data, ...patch });
+  const updSeg = (id, p) => upd({ segments: segments.map((s) => (s.id === id ? { ...s, ...p } : s)) });
+  const updPer = (id, p) => upd({ personas: personas.map((x) => (x.id === id ? { ...x, ...p } : x)) });
+
+  return (
+    <div className="segper">
+      <div className="block">
+        <div className="blockhead"><h3>Segments</h3></div>
+        <div className="rows">
+          {segments.map((s) => (
+            <div className="row segrow" key={s.id}>
+              <input className="grow" placeholder="Nom du segment" value={s.name} onChange={(e) => updSeg(s.id, { name: e.target.value })} />
+              <select className="segtype" value={s.type} onChange={(e) => updSeg(s.id, { type: e.target.value })}>
+                {SEGMENT_TYPES.map((x) => <option key={x} value={x}>{x}</option>)}
+              </select>
+              <input className="grow2" placeholder="Description" value={s.desc} onChange={(e) => updSeg(s.id, { desc: e.target.value })} />
+              <button className="del" onClick={() => upd({ segments: segments.filter((x) => x.id !== s.id) })} aria-label="Retirer">×</button>
+            </div>
+          ))}
+        </div>
+        <button className="addrow" onClick={() => upd({ segments: [...segments, { id: rid("sg"), name: "", type: "B2C", desc: "" }] })}>+ Segment</button>
+      </div>
+
+      <div className="block">
+        <div className="blockhead">
+          <h3>Personas</h3>
+          <button className="miniaction" onClick={() => upd({ personas: SEED_PERSONAS.map((p) => ({ id: rid("pe"), ...p })) })}>Reprendre mes 3 personas du pitch</button>
+        </div>
+        <div className="percards">
+          {personas.map((p) => (
+            <div className="percard" key={p.id}>
+              <div className="perhead">
+                <input className="pername" placeholder="Nom, âge" value={p.name} onChange={(e) => updPer(p.id, { name: e.target.value })} />
+                <input className="pertag" placeholder="Surnom (ex. La Découvreuse)" value={p.tagline} onChange={(e) => updPer(p.id, { tagline: e.target.value })} />
+                <select className="segtype" value={p.type} onChange={(e) => updPer(p.id, { type: e.target.value })}>
+                  {SEGMENT_TYPES.map((x) => <option key={x} value={x}>{x}</option>)}
+                </select>
+                <button className="del" onClick={() => upd({ personas: personas.filter((x) => x.id !== p.id) })} aria-label="Retirer">×</button>
+              </div>
+              <label className="perlbl">Contexte</label>
+              <textarea rows={2} placeholder="Qui, où, situation…" value={p.context} onChange={(e) => updPer(p.id, { context: e.target.value })} />
+              <label className="perlbl">Objectifs</label>
+              <textarea rows={2} placeholder="Ce qu'elle cherche à faire…" value={p.goals} onChange={(e) => updPer(p.id, { goals: e.target.value })} />
+              <label className="perlbl">Frustrations</label>
+              <textarea rows={2} placeholder="Ses points de douleur…" value={p.pains} onChange={(e) => updPer(p.id, { pains: e.target.value })} />
+              <label className="perlbl">Citation</label>
+              <input placeholder="« … »" value={p.quote} onChange={(e) => updPer(p.id, { quote: e.target.value })} />
+            </div>
+          ))}
+        </div>
+        <button className="addrow" onClick={() => upd({ personas: [...personas, { id: rid("pe"), name: "", tagline: "", type: "B2C", context: "", goals: "", pains: "", quote: "" }] })}>+ Persona</button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Dév technique ---------------- */
+function TechModule({ data, setData }) {
+  const services = data.services || [];
+  const decisions = data.decisions || [];
+  const chantiers = data.chantiers || [];
+  const upd = (patch) => setData({ ...data, ...patch });
+
+  const updSvc = (id, p) => upd({ services: services.map((s) => (s.id === id ? { ...s, ...p } : s)) });
+  const updDec = (id, p) => upd({ decisions: decisions.map((d) => (d.id === id ? { ...d, ...p } : d)) });
+  const updCha = (id, p) => upd({ chantiers: chantiers.map((c) => (c.id === id ? { ...c, ...p } : c)) });
+
+  return (
+    <div className="tech">
+      <div className="block">
+        <div className="blockhead"><h3>Architecture & stack</h3></div>
+        <textarea className="bigtext" rows={4} placeholder="Front : … · IA : … · Back : … · Hébergement : … · Automatisations : …" value={data.stack || ""} onChange={(e) => upd({ stack: e.target.value })} />
+      </div>
+
+      <div className="block">
+        <div className="blockhead"><h3>Intégrations & services</h3></div>
+        <div className="rows">
+          {services.map((s) => (
+            <div className="row techrow" key={s.id}>
+              <input className="grow" placeholder="Service (Fal.ai, Firebase, n8n, Stripe…)" value={s.name} onChange={(e) => updSvc(s.id, { name: e.target.value })} />
+              <input className="grow" placeholder="Rôle" value={s.role} onChange={(e) => updSvc(s.id, { role: e.target.value })} />
+              <select className="techstatus" value={s.status} onChange={(e) => updSvc(s.id, { status: e.target.value })}>
+                {TECH_SERVICE_STATUS.map((x) => <option key={x} value={x}>{x}</option>)}
+              </select>
+              <button className="del" onClick={() => upd({ services: services.filter((x) => x.id !== s.id) })} aria-label="Retirer">×</button>
+            </div>
+          ))}
+        </div>
+        <button className="addrow" onClick={() => upd({ services: [...services, { id: rid("sv"), name: "", role: "", status: "À intégrer" }] })}>+ Service</button>
+      </div>
+
+      <div className="block">
+        <div className="blockhead"><h3>Décisions techniques</h3></div>
+        <div className="rows">
+          {decisions.map((d) => (
+            <div className="row techrow" key={d.id}>
+              <input className="grow" placeholder="Décision (ex. Firebase plutôt que Supabase)" value={d.decision} onChange={(e) => updDec(d.id, { decision: e.target.value })} />
+              <input className="grow" placeholder="Pourquoi" value={d.why} onChange={(e) => updDec(d.id, { why: e.target.value })} />
+              <input className="techdate" placeholder="Date" value={d.date} onChange={(e) => updDec(d.id, { date: e.target.value })} />
+              <button className="del" onClick={() => upd({ decisions: decisions.filter((x) => x.id !== d.id) })} aria-label="Retirer">×</button>
+            </div>
+          ))}
+        </div>
+        <button className="addrow" onClick={() => upd({ decisions: [...decisions, { id: rid("dc"), decision: "", why: "", date: "" }] })}>+ Décision</button>
+      </div>
+
+      <div className="block">
+        <div className="blockhead"><h3>Chantiers & dette technique</h3></div>
+        <div className="rows">
+          {chantiers.map((c) => (
+            <div className="row techrow" key={c.id}>
+              <input className="grow" placeholder="Tâche technique / dette" value={c.label} onChange={(e) => updCha(c.id, { label: e.target.value })} />
+              <select className="techstatus" value={c.status} onChange={(e) => updCha(c.id, { status: e.target.value })}>
+                {TECH_CHANTIER_STATUS.map((x) => <option key={x} value={x}>{x}</option>)}
+              </select>
+              <button className="del" onClick={() => upd({ chantiers: chantiers.filter((x) => x.id !== c.id) })} aria-label="Retirer">×</button>
+            </div>
+          ))}
+        </div>
+        <button className="addrow" onClick={() => upd({ chantiers: [...chantiers, { id: rid("ch"), label: "", status: "À faire" }] })}>+ Chantier</button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Cap table ---------------- */
+function CapTable({ rows, setRows }) {
+  const total = rows.reduce((a, r) => a + (parseFloat(r.share) || 0), 0);
+  const update = (i, k, v) => setRows(rows.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
+  return (
+    <div className="block">
+      <div className="blockhead">
+        <h3>Cap table</h3>
+        <span className={"total " + (total > 100 ? "over" : "")}>{total || 0}% réparti</span>
+      </div>
+      <div className="rows">
+        {rows.map((r, i) => (
+          <div className="row cap" key={i}>
+            <input className="grow" placeholder="Détenteur·rice (Aminata, pool ESOP…)" value={r.holder} onChange={(e) => update(i, "holder", e.target.value)} />
+            <input className="pct" placeholder="%" inputMode="decimal" value={r.share} onChange={(e) => update(i, "share", e.target.value)} />
+            <button className="del" onClick={() => setRows(rows.filter((_, idx) => idx !== i))} aria-label="Supprimer">×</button>
+          </div>
+        ))}
+      </div>
+      <button className="addrow" onClick={() => setRows([...rows, { holder: "", share: "" }])}>+ Ajouter une ligne</button>
+    </div>
+  );
+}
+
+/* ---------------- CRM ---------------- */
+function CrmTable({ rows, setRows }) {
+  const update = (i, k, v) => setRows(rows.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
+  return (
+    <div className="block">
+      <div className="blockhead"><h3>Pipeline investisseurs & programmes</h3></div>
+      <div className="rows">
+        {rows.map((r, i) => (
+          <div className="row crm" key={i}>
+            <input className="grow" placeholder="Nom (contact, fonds, programme…)" value={r.name} onChange={(e) => update(i, "name", e.target.value)} />
+            <input className="type" placeholder="Type" value={r.type} onChange={(e) => update(i, "type", e.target.value)} />
+            <select className="crmstatus" value={r.status} onChange={(e) => update(i, "status", e.target.value)}>
+              {CRM_STATUS.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <input className="grow next" placeholder="Prochaine action" value={r.next} onChange={(e) => update(i, "next", e.target.value)} />
+            <button className="del" onClick={() => setRows(rows.filter((_, idx) => idx !== i))} aria-label="Supprimer">×</button>
+          </div>
+        ))}
+      </div>
+      <button className="addrow" onClick={() => setRows([...rows, { name: "", type: "", status: "À contacter", next: "" }])}>+ Ajouter un contact</button>
+    </div>
+  );
+}
+
+/* ---------------- Journals ---------------- */
+function MiniJournal({ sectionKey, entries, addJournal, delJournal }) {
+  const [text, setText] = useState("");
+  const [kind, setKind] = useState("note");
+  const submit = () => {
+    if (!text.trim()) return;
+    addJournal({ section: sectionKey, kind, text: text.trim() });
+    setText("");
+  };
+  return (
+    <div className="block minijournal">
+      <div className="blockhead"><h3>Journal de cette section</h3></div>
+      <div className="entryinput">
+        <div className="kindtoggle">
+          <button className={kind === "note" ? "on" : ""} onClick={() => setKind("note")}>Note</button>
+          <button className={kind === "jalon" ? "on jalon" : "jalon"} onClick={() => setKind("jalon")}>Jalon</button>
+        </div>
+        <textarea rows={2} placeholder={kind === "jalon" ? "Un cap franchi ? Note-le comme jalon." : "Une pensée, un blocage, une avancée…"} value={text} onChange={(e) => setText(e.target.value)} />
+        <button className="addbtn" onClick={submit}>Ajouter</button>
+      </div>
+      <EntryList entries={entries} delJournal={delJournal} showSection={false} />
+    </div>
+  );
+}
+
+const INTERVIEW_STATUS = [
+  { code: "todo", label: "À planifier" },
+  { code: "planned", label: "Planifiée" },
+  { code: "done", label: "Faite" },
+];
+
+function InterviewsView({ state, setInterviews }) {
+  const interviews = state.interviews || [];
+  const segNames = ((state.segper && state.segper.segments) || []).map((s) => s.name).filter(Boolean);
+  const add = () =>
+    setInterviews([{ id: Date.now(), ts: Date.now(), date: formatDateShort(Date.now()), person: "", segment: "", status: "todo", learnings: "", verbatim: "" }, ...interviews]);
+  const upd = (id, p) => setInterviews(interviews.map((m) => (m.id === id ? { ...m, ...p } : m)));
+  const del = (id) => setInterviews(interviews.filter((m) => m.id !== id));
+
+  const counts = { todo: 0, planned: 0, done: 0 };
+  interviews.forEach((i) => counts[i.status] !== undefined && counts[i.status]++);
+
+  return (
+    <div className="section">
+      <div className="sechead">
+        <div>
+          <h2>Interviews</h2>
+          <p className="ovhelp">Ton suivi de discovery : {counts.done} faites · {counts.planned} planifiées · {counts.todo} à planifier.</p>
+        </div>
+        <button className="addbtn" onClick={add}>+ Nouvelle</button>
+      </div>
+      <datalist id="itwsegs">
+        {segNames.map((n) => <option key={n} value={n} />)}
+      </datalist>
+      {interviews.length === 0 ? (
+        <p className="empty">Aucune interview pour l'instant. Clique « + Nouvelle » pour en planifier une.</p>
+      ) : (
+        <div className="itwlist">
+          {interviews.map((m) => (
+            <div className={"itwcard itw-" + (m.status || "todo")} key={m.id}>
+              <div className="itwtop">
+                <input className="itwdate" placeholder="Date" value={m.date} onChange={(e) => upd(m.id, { date: e.target.value })} />
+                <input className="itwperson" placeholder="Personne (nom, rôle)" value={m.person} onChange={(e) => upd(m.id, { person: e.target.value })} />
+                <input className="itwseg" list="itwsegs" placeholder="Segment" value={m.segment} onChange={(e) => upd(m.id, { segment: e.target.value })} />
+                <select className="itwstatus" value={m.status} onChange={(e) => upd(m.id, { status: e.target.value })}>
+                  {INTERVIEW_STATUS.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
+                </select>
+                <button className="del" onClick={() => del(m.id)} aria-label="Supprimer">×</button>
+              </div>
+              <label className="perlbl">Apprentissages</label>
+              <textarea rows={3} placeholder="Ce que tu as appris…" value={m.learnings} onChange={(e) => upd(m.id, { learnings: e.target.value })} />
+              <label className="perlbl">Verbatim</label>
+              <input placeholder="« citation clé… »" value={m.verbatim} onChange={(e) => upd(m.id, { verbatim: e.target.value })} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function mdToHtml(src) {
+  const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const inline = (t) =>
+    t.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/_(.+?)_/g, "<em>$1</em>");
+  const lines = esc(src || "").split("\n");
+  let html = "", inList = false;
+  for (const line of lines) {
+    const h = line.match(/^(#{1,3})\s+(.*)$/);
+    const bullet = line.match(/^\s*[-*]\s+(.*)$/);
+    if (bullet) {
+      if (!inList) { html += "<ul>"; inList = true; }
+      html += "<li>" + inline(bullet[1]) + "</li>";
+      continue;
+    }
+    if (inList) { html += "</ul>"; inList = false; }
+    if (h) {
+      const lvl = h[1].length + 1;
+      html += "<h" + lvl + ">" + inline(h[2]) + "</h" + lvl + ">";
+    } else if (line.trim() === "") {
+      html += "";
+    } else {
+      html += "<p>" + inline(line) + "</p>";
+    }
+  }
+  if (inList) html += "</ul>";
+  return html || "<p class='nedempty'>Rien à afficher.</p>";
+}
+
+function NotesEditor({ value, onChange, rows = 5, placeholder }) {
+  const [preview, setPreview] = useState(false);
+  const ref = useRef(null);
+  const val = value || "";
+  const wrapInline = (before, after) => {
+    const el = ref.current;
+    if (!el) { onChange(val + before + after); return; }
+    const s = el.selectionStart, e = el.selectionEnd;
+    const sel = val.slice(s, e) || "texte";
+    onChange(val.slice(0, s) + before + sel + after + val.slice(e));
+  };
+  const prefixLines = (pfx) => {
+    const el = ref.current;
+    const s = el ? el.selectionStart : val.length;
+    const e = el ? el.selectionEnd : val.length;
+    const lineStart = val.lastIndexOf("\n", s - 1) + 1;
+    const seg = val.slice(lineStart, e) || "";
+    const out = (seg || "").split("\n").map((l) => pfx + l).join("\n");
+    onChange(val.slice(0, lineStart) + out + val.slice(e));
+  };
+  return (
+    <div className="ned">
+      <div className="nedbar">
+        {!preview && (
+          <>
+            <button type="button" onClick={() => prefixLines("## ")} title="Titre">Titre</button>
+            <button type="button" onClick={() => wrapInline("**", "**")} title="Gras"><b>G</b></button>
+            <button type="button" onClick={() => prefixLines("- ")} title="Puce">• Puce</button>
+          </>
+        )}
+        <span className="nedspacer" />
+        <button type="button" className={"nedtab" + (preview ? "" : " on")} onClick={() => setPreview(false)}>Écrire</button>
+        <button type="button" className={"nedtab" + (preview ? " on" : "")} onClick={() => setPreview(true)}>Aperçu</button>
+      </div>
+      {preview ? (
+        <div className="nedpreview" dangerouslySetInnerHTML={{ __html: mdToHtml(val) }} />
+      ) : (
+        <textarea ref={ref} rows={rows} placeholder={placeholder} value={val} onChange={(e) => onChange(e.target.value)} />
+      )}
+    </div>
+  );
+}
+
+function MeetingsView({ state, setMeetings }) {
+  const meetings = state.meetings || [];
+  const [openId, setOpenId] = useState(null);
+  const [filterTheme, setFilterTheme] = useState(null);
+  const [themeInput, setThemeInput] = useState("");
+
+  const add = () => {
+    const m = { id: Date.now(), ts: Date.now(), date: formatDateShort(Date.now()), title: "", notes: "", themes: [] };
+    setMeetings([m, ...meetings]);
+    setOpenId(m.id);
+  };
+  const upd = (id, p) => setMeetings(meetings.map((m) => (m.id === id ? { ...m, ...p } : m)));
+  const del = (id) => { setMeetings(meetings.filter((m) => m.id !== id)); setOpenId(null); };
+
+  const allThemes = Array.from(new Set(meetings.flatMap((m) => m.themes || []))).filter(Boolean);
+  const current = meetings.find((m) => m.id === openId);
+
+  if (current) {
+    const themes = current.themes || [];
+    const related = meetings.filter((m) => m.id !== current.id && (m.themes || []).some((t) => themes.includes(t)));
+    const addTheme = () => {
+      const t = themeInput.trim();
+      if (!t || themes.includes(t)) { setThemeInput(""); return; }
+      upd(current.id, { themes: [...themes, t] });
+      setThemeInput("");
+    };
+    return (
+      <div className="section">
+        <div className="sechead">
+          <div><button className="backbtn" onClick={() => setOpenId(null)}>← Toutes les pages</button></div>
+          <button className="ghostdel" onClick={() => del(current.id)}>Supprimer</button>
+        </div>
+        <div className="pageedit">
+          <input className="pagetitle" placeholder="Titre de la page (atelier, réunion…)" value={current.title} onChange={(e) => upd(current.id, { title: e.target.value })} />
+          <input className="pagedate" placeholder="Date" value={current.date} onChange={(e) => upd(current.id, { date: e.target.value })} />
+          <div className="themerow">
+            <span className="perlbl">Thématiques</span>
+            <div className="themechips">
+              {themes.map((t) => (
+                <span className="themechip" key={t}>{t}<button onClick={() => upd(current.id, { themes: themes.filter((x) => x !== t) })} aria-label="Retirer">×</button></span>
+              ))}
+              {themes.length === 0 && <span className="fmuted">aucune</span>}
+            </div>
+            <div className="themeadd">
+              <input list="mtgthemes" placeholder="Ajouter un thème…" value={themeInput} onChange={(e) => setThemeInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addTheme(); }} />
+              <button className="miniaction" onClick={addTheme}>Ajouter</button>
+              <datalist id="mtgthemes">{allThemes.map((t) => <option key={t} value={t} />)}</datalist>
+            </div>
+          </div>
+          <NotesEditor value={current.notes} onChange={(v) => upd(current.id, { notes: v })} rows={12} placeholder="Notes… (## Titre, **gras**, - puce)" />
+          <div className="related">
+            <span className="perlbl">Pages liées (mêmes thématiques)</span>
+            {related.length === 0 ? (
+              <p className="empty">Aucune page ne partage ces thématiques pour l'instant.</p>
+            ) : (
+              <ul className="relatedlist">
+                {related.map((m) => (
+                  <li key={m.id} onClick={() => setOpenId(m.id)}>
+                    <span className="reltitle">{m.title || "Sans titre"}</span>
+                    <span className="reldate">{m.date}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const list = filterTheme ? meetings.filter((m) => (m.themes || []).includes(filterTheme)) : meetings;
+  return (
+    <div className="section">
+      <div className="sechead">
+        <div>
+          <h2>Réunions & ateliers</h2>
+          <p className="ovhelp">Une page par atelier, reliées par thématiques.</p>
+        </div>
+        <button className="addbtn" onClick={add}>+ Nouvelle page</button>
+      </div>
+      {allThemes.length > 0 && (
+        <div className="themefilter">
+          <button className={"tfchip" + (filterTheme === null ? " on" : "")} onClick={() => setFilterTheme(null)}>Toutes</button>
+          {allThemes.map((t) => (
+            <button key={t} className={"tfchip" + (filterTheme === t ? " on" : "")} onClick={() => setFilterTheme(t)}>{t}</button>
+          ))}
+        </div>
+      )}
+      {list.length === 0 ? (
+        <p className="empty">Aucune page. Clique « + Nouvelle page » pour ton prochain atelier.</p>
+      ) : (
+        <div className="pagelist">
+          {list.map((m) => (
+            <button className="pagerow" key={m.id} onClick={() => setOpenId(m.id)}>
+              <span className="pagerowtitle">{m.title || "Sans titre"}</span>
+              <span className="pagerowmeta">
+                {(m.themes || []).map((t) => <span className="themechip sm" key={t}>{t}</span>)}
+                <span className="pagerowdate">{m.date}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function JournalView({ state, addJournal, delJournal }) {
+  const [text, setText] = useState("");
+  const [kind, setKind] = useState("note");
+  const [sec, setSec] = useState("general");
+  const [filter, setFilter] = useState("all");
+  const submit = () => {
+    if (!text.trim()) return;
+    addJournal({ section: sec, kind, text: text.trim() });
+    setText("");
+  };
+  const entries = filter === "all" ? state.journal : state.journal.filter((e) => e.section === filter);
+  return (
+    <div className="section journalview">
+      <div className="sechead"><div><h2>Journal de bord</h2></div></div>
+      <div className="guide"><span className="guideicon">✦</span><p>Toutes tes avancées, en une timeline. Marque un cap comme « jalon » quand il compte.</p></div>
+
+      <div className="block">
+        <div className="entryinput big">
+          <div className="inputrow">
+            <div className="kindtoggle">
+              <button className={kind === "note" ? "on" : ""} onClick={() => setKind("note")}>Note</button>
+              <button className={kind === "jalon" ? "on jalon" : "jalon"} onClick={() => setKind("jalon")}>Jalon</button>
+            </div>
+            <select value={sec} onChange={(e) => setSec(e.target.value)} className="secselect">
+              <option value="general">Général</option>
+              {ALL_KEYS.map((k) => <option key={k} value={k}>{SECTIONS[k].label}</option>)}
+            </select>
+          </div>
+          <textarea rows={3} placeholder="Qu’est-ce qui a bougé aujourd’hui ?" value={text} onChange={(e) => setText(e.target.value)} />
+          <button className="addbtn" onClick={submit}>Ajouter au journal</button>
+        </div>
+      </div>
+
+      <div className="filterbar">
+        <button className={filter === "all" ? "on" : ""} onClick={() => setFilter("all")}>Tout</button>
+        <button className={filter === "general" ? "on" : ""} onClick={() => setFilter("general")}>Général</button>
+        {ALL_KEYS.map((k) => <button key={k} className={filter === k ? "on" : ""} onClick={() => setFilter(k)}>{SECTIONS[k].label}</button>)}
+      </div>
+
+      <EntryList entries={entries} delJournal={delJournal} showSection={true} />
+    </div>
+  );
+}
+
+function EntryList({ entries, delJournal, showSection }) {
+  if (!entries.length) return <p className="empty">Rien encore ici. La première entrée est toujours la plus dure — puis ça coule.</p>;
+  const secLabel = (k) => (k === "general" ? "Général" : (SECTIONS[k] || {}).label || k);
+  return (
+    <ul className="entries">
+      {entries.map((e) => (
+        <li className={"entry " + (e.kind === "jalon" ? "isjalon" : "")} key={e.id}>
+          <div className="entrymeta">
+            <time>{formatDate(e.ts)}</time>
+            {e.kind === "jalon" && <span className="jalonbadge">Jalon</span>}
+            {showSection && <span className="secbadge">{secLabel(e.section)}</span>}
+          </div>
+          <p className="entrytext">{e.text}</p>
+          <button className="del entrydel" onClick={() => delJournal(e.id)} aria-label="Supprimer">×</button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/* ---------------- helpers ---------------- */
+function formatDate(ts) {
+  try {
+    return new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(ts));
+  } catch (e) {
+    return new Date(ts).toLocaleString();
+  }
+}
+
+function formatDateShort(ts) {
+  try {
+    return new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(ts));
+  } catch (e) {
+    return new Date(ts).toLocaleDateString();
+  }
+}
+
+function buildMarkdown(state, pct) {
+  let md = `# Crown On Me — Cockpit\n\n_Avancement : ${pct}%_\n\n`;
+  ALL_KEYS.forEach((k) => {
+    const s = SECTIONS[k];
+    md += `## ${s.label} — ${isStarted(state, k) ? "Entamée" : "À remplir"}\n\n`;
+    const v = state.fields[k];
+    if (s.type === "text" || s.type === "finances") {
+      if (v.body && v.body.trim()) md += `${v.body.trim()}\n\n`;
+    } else if (s.fields) {
+      s.fields.forEach(([fk, label]) => {
+        if (v[fk] && v[fk].trim()) md += `**${label}**\n${v[fk].trim()}\n\n`;
+      });
+    }
+    if (k === "finances") {
+      const cap = num(state.finance.capital);
+      const tr = state.finance.months.reduce((a, m) => a + num(m.revenue), 0);
+      const te = state.finance.months.reduce((a, m) => a + num(m.expense), 0);
+      md += `Capital : ${eur(cap)} · Revenus : ${eur(tr)} · Dépenses : ${eur(te)} · Net : ${eur(tr - te)}\n\n`;
+    }
+    if (k === "equipe") {
+      const rows = state.captable.filter((r) => r.holder || r.share);
+      if (rows.length) { md += `**Cap table**\n`; rows.forEach((r) => (md += `- ${r.holder || "?"} : ${r.share || "?"}%\n`)); md += `\n`; }
+    }
+    if (k === "levee") {
+      const rows = state.crm.filter((r) => r.name);
+      if (rows.length) { md += `**Pipeline**\n`; rows.forEach((r) => (md += `- ${r.name} (${r.type || "—"}) · ${r.status} · ${r.next || "—"}\n`)); md += `\n`; }
+    }
+    if (k === "roadmap" && state.roadmap) {
+      state.roadmap.forEach((p) => {
+        md += `### ${p.tag} — ${p.title}${p.timeframe ? " (" + p.timeframe + ")" : ""}\n`;
+        if (p.subtitle) md += `_${p.subtitle}_\n`;
+        p.features.forEach((f) => (md += `- ${f.done ? "[x]" : "[ ]"} ${f.name}${f.seg && SEGMENTS[f.seg] ? " [" + SEGMENTS[f.seg].name + "]" : ""}${f.desc ? " — " + f.desc : ""}\n`));
+        md += `\n`;
+      });
+    }
+    if (k === "concurrents" && state.competitors) {
+      const c = state.competitors;
+      if (c.cols && c.cols.length) {
+        md += `| Critère | ${c.cols.join(" | ")} |\n`;
+        md += `| --- ${c.cols.map(() => "| ---").join(" ")} |\n`;
+        (c.rows || []).forEach((r) => {
+          md += `| ${r.crit} | ${r.cells.map((x) => (x || "").replace(/\n/g, " ")).join(" | ")} |\n`;
+        });
+        md += `\n`;
+      }
+      if (c.edge) md += `**Avantage différenciateur** — ${c.edge}\n\n`;
+      const nb = state.fields.concurrents && state.fields.concurrents.body;
+      if (nb && nb.trim()) md += `${nb.trim()}\n\n`;
+    }
+    if (k === "canvas" && state.bmc) {
+      BMC_BLOCKS.forEach((b) => {
+        const v = state.bmc[b.key];
+        if (v && v.trim()) md += `**${b.title}**\n${v.trim()}\n\n`;
+      });
+    }
+    if (k === "produit" && state.produit) {
+      const pr = state.produit;
+      if (pr.intro) md += `${pr.intro}\n\n`;
+      if (Array.isArray(pr.briques) && pr.briques.length) {
+        md += `**Briques produit**\n`;
+        pr.briques.forEach((b) => (md += `- ${b.icon} ${b.title} — ${b.desc}\n`));
+        md += `\n`;
+      }
+      if (Array.isArray(pr.parcours) && pr.parcours.length) {
+        md += `**Parcours utilisateur**\n`;
+        pr.parcours.forEach((s, i) => (md += `${i + 1}. ${s.icon} ${s.title}${s.badge ? " [" + s.badge + "]" : ""} — ${s.desc}\n`));
+        md += `\n`;
+      }
+      if (Array.isArray(pr.stack) && pr.stack.filter(Boolean).length) md += `**Stack** : ${pr.stack.filter(Boolean).join(" · ")}\n\n`;
+      if (pr.notes && pr.notes.trim()) md += `${pr.notes.trim()}\n\n`;
+    }
+    if (k === "tarification" && state.pricing && Array.isArray(state.pricing.tiers)) {
+      state.pricing.tiers.forEach((t) => {
+        md += `### ${t.name}${t.cible ? " — " + t.cible : ""} · ${t.price}${t.period ? " " + t.period : ""}${t.featured && t.tag ? " (" + t.tag + ")" : ""}\n`;
+        (t.features || []).filter(Boolean).forEach((f) => (md += `- ${f}\n`));
+        md += `\n`;
+      });
+    }
+    if (k === "segments" && state.segper) {
+      const sp = state.segper;
+      const sg = (sp.segments || []).filter((s) => s.name);
+      if (sg.length) { md += `**Segments**\n`; sg.forEach((s) => (md += `- ${s.name} (${s.type})${s.desc ? " — " + s.desc : ""}\n`)); md += `\n`; }
+      const pe = (sp.personas || []).filter((p) => p.name);
+      if (pe.length) {
+        md += `**Personas**\n`;
+        pe.forEach((p) => {
+          md += `- ${p.name}${p.tagline ? " · " + p.tagline : ""} (${p.type})\n`;
+          if (p.context) md += `  - Contexte : ${p.context}\n`;
+          if (p.goals) md += `  - Objectifs : ${p.goals}\n`;
+          if (p.pains) md += `  - Frustrations : ${p.pains}\n`;
+          if (p.quote) md += `  - « ${p.quote} »\n`;
+        });
+        md += `\n`;
+      }
+    }
+    if (k === "tech" && state.tech) {
+      const tc = state.tech;
+      if (tc.stack && tc.stack.trim()) md += `**Architecture & stack**\n${tc.stack.trim()}\n\n`;
+      const sv = (tc.services || []).filter((s) => s.name);
+      if (sv.length) { md += `**Intégrations & services**\n`; sv.forEach((s) => (md += `- ${s.name}${s.role ? " (" + s.role + ")" : ""} · ${s.status}\n`)); md += `\n`; }
+      const dc = (tc.decisions || []).filter((d) => d.decision);
+      if (dc.length) { md += `**Décisions techniques**\n`; dc.forEach((d) => (md += `- ${d.decision}${d.why ? " — " + d.why : ""}${d.date ? " (" + d.date + ")" : ""}\n`)); md += `\n`; }
+      const ch = (tc.chantiers || []).filter((c) => c.label);
+      if (ch.length) { md += `**Chantiers & dette technique**\n`; ch.forEach((c) => (md += `- [${c.status}] ${c.label}\n`)); md += `\n`; }
+    }
+    if (k === "hypotheses" && Array.isArray(state.hypotheses)) {
+      state.hypotheses.forEach((h) => {
+        const t = HYP_TYPE[h.type] ? HYP_TYPE[h.type].name : "";
+        const st = HYP_STATUS[h.status] ? HYP_STATUS[h.status].name : "";
+        md += `- **${h.claim || "(sans énoncé)"}** [${t} · ${st}]\n`;
+        if (h.method) md += `  - Méthode : ${h.method}\n`;
+        if (h.note) md += `  - Note : ${h.note}\n`;
+        if (h.next) md += `  - Prochaine action : ${h.next}\n`;
+        md += `  - Importance : ${(h.importance || "high") === "high" ? "Élevée" : "Faible"} · Certitude : ${(h.certainty || "low") === "high" ? "Élevée" : "Faible"}\n`;
+      });
+      md += `\n`;
+    }
+  });
+  if (state.journal.length) {
+    md += `## Journal\n\n`;
+    state.journal.forEach((e) => {
+      const secL = e.section === "general" ? "Général" : (SECTIONS[e.section] || {}).label || e.section;
+      md += `- [${formatDate(e.ts)}]${e.kind === "jalon" ? " **JALON**" : ""} (${secL}) ${e.text}\n`;
+    });
+    md += `\n`;
+  }
+  if (state.meetings && state.meetings.length) {
+    md += `## Réunions & ateliers\n\n`;
+    state.meetings.forEach((m) => {
+      md += `### ${m.title || "Sans titre"}${m.date ? " — " + m.date : ""}\n`;
+      if (m.themes && m.themes.length) md += `_Thématiques : ${m.themes.join(", ")}_\n`;
+      md += `\n`;
+      if (m.notes) md += `${m.notes}\n\n`;
+    });
+  }
+  if (state.interviews && state.interviews.length) {
+    const SL = { todo: "À planifier", planned: "Planifiée", done: "Faite" };
+    md += `## Interviews\n\n`;
+    state.interviews.forEach((m) => {
+      md += `### ${m.person || "Sans nom"}${m.date ? " — " + m.date : ""}\n`;
+      md += `- Statut : ${SL[m.status] || m.status}${m.segment ? " · Segment : " + m.segment : ""}\n`;
+      if (m.learnings) md += `- Apprentissages : ${m.learnings}\n`;
+      if (m.verbatim) md += `- « ${m.verbatim} »\n`;
+      md += `\n`;
+    });
+  }
+  if (state.todos && state.todos.length) {
+    md += `## Ma to-do\n\n`;
+    state.todos.forEach((t) => {
+      md += `- [${t.done ? "x" : " "}] ${t.text}\n`;
+    });
+    md += `\n`;
+  }
+  return md;
+}
+
+/* ---------------- styles ---------------- */
+function StyleTag() {
+  return (
+    <style>{`
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=DM+Sans:wght@300;400;500&display=swap');
+
+.com-root{
+  --ink:#0d0d0b; --ink-soft:#5c5347;
+  --plum:#0d0d0b; --plum-deep:#000000;
+  --gold:#c9854a; --gold-deep:#a86a34;
+  --sand:#f2ece0; --sand-2:#e9ddc7; --card:#fdfbf4; --line:#e0d4be;
+  --band-faint:#ece0c9; --band-line:#d4b896;
+  --emerald:#2d7a5f; --stone:#8b7355; --danger:#b5462a;
+  font-family:'DM Sans',system-ui,sans-serif; color:var(--ink);
+  background:var(--sand);
+  min-height:100vh; line-height:1.5; -webkit-font-smoothing:antialiased;
+}
+.com-root *{box-sizing:border-box;}
+.com-root.loading{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--ink-soft);min-height:60vh;}
+.com-root .spinner{width:26px;height:26px;border-radius:50%;border:3px solid var(--line);border-top-color:var(--plum);animation:spin .8s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* mobile top */
+.mobiletop{display:none;}
+.burger{background:transparent;border:none;font-size:20px;color:var(--ink);cursor:pointer;padding:4px 8px;}
+.scrim{position:fixed;inset:0;background:rgba(13,13,11,.4);z-index:40;}
+
+.shell{display:flex;align-items:flex-start;max-width:1180px;margin:0 auto;}
+
+/* sidebar */
+.sidebar{width:250px;flex:none;position:sticky;top:0;height:100vh;overflow-y:auto;display:flex;flex-direction:column;background:#efe4d0;border-right:1px solid var(--line);padding:22px 16px 16px;}
+.sidebar::-webkit-scrollbar{width:6px;} .sidebar::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px;}
+.sidehead{padding:0 4px 14px;border-bottom:1px solid var(--line);margin-bottom:12px;}
+.crown{width:130px;height:auto;display:block;margin-bottom:6px;}
+.eyebrow{font-family:'DM Sans',sans-serif;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--plum);}
+.wordmark{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:24px;line-height:1;margin:3px 0 12px;letter-spacing:-.01em;color:var(--ink);}
+.progwrap{display:flex;flex-direction:column;gap:5px;}
+.progbar{height:8px;background:var(--sand-2);border-radius:999px;overflow:hidden;border:1px solid var(--line);}
+.progfill{height:100%;background:linear-gradient(90deg,var(--gold),var(--gold-deep));border-radius:999px;transition:width .5s ease;}
+.progtxt{font-family:'DM Sans',sans-serif;font-size:11px;color:var(--gold-deep);}
+.savestate{display:block;margin-top:8px;font-family:'DM Sans',sans-serif;font-size:10px;color:var(--ink-soft);}
+
+.sidenav{flex:1;padding-top:4px;}
+.navgroup{margin-bottom:14px;}
+.navgrouptitle{font-family:'DM Sans',sans-serif;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--stone);margin:0 6px 6px;}
+.navitem{width:100%;display:flex;align-items:center;gap:9px;background:transparent;border:none;border-radius:9px;padding:8px 8px;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:14px;color:var(--ink-soft);text-align:left;transition:.15s;}
+.navitem:hover{background:var(--sand-2);color:var(--ink);}
+.navitem.on{background:var(--plum);color:#fff;}
+.navdot{width:8px;height:8px;border-radius:50%;background:var(--stone);flex:none;}
+.navitem.st-empty .navdot{background:var(--band-line);}
+.navitem.st-started .navdot{background:var(--gold);}
+.navitem.st-doing .navdot{background:var(--gold);}
+.navitem.st-done .navdot{background:var(--emerald);}
+.navitem.on .navdot{outline:2px solid rgba(255,255,255,.5);}
+.navdot.star{background:transparent;color:var(--gold);font-size:11px;width:auto;height:auto;line-height:1;}
+.navlabel{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+.sidefoot{padding:12px 4px 4px;border-top:1px solid var(--line);}
+.mdbtn{width:100%;font-family:'DM Sans',sans-serif;font-size:12px;background:transparent;color:var(--plum);border:1px solid var(--line);border-radius:9px;padding:9px;cursor:pointer;transition:.2s;}
+.mdbtn:hover{background:var(--plum);color:#fff;border-color:var(--plum);}
+.storenote{font-family:'DM Sans',sans-serif;font-size:10px;color:var(--ink-soft);margin:8px 0 0;}
+.importbtn{margin-top:8px;}
+.importmodal{max-width:520px;text-align:left;}
+.implabel{display:block;font-size:12px;font-weight:600;color:var(--ink);margin:12px 0 5px;}
+.impfile{width:100%;font-size:13px;padding:8px;}
+.imptext{width:100%;}
+.improw{display:flex;gap:12px;margin-top:4px;}
+.impcol{flex:1;}
+.impcol select{width:100%;cursor:pointer;}
+.imphint{font-size:12px;color:var(--ink-soft);font-style:italic;margin:8px 0 0;}
+.impfoot{gap:10px;}
+
+/* content */
+.content{flex:1;min-width:0;padding:30px 34px 60px;max-width:840px;}
+.section{animation:rise .3s ease;}
+@keyframes rise{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+.sechead{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:16px;}
+.sechead h2{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:clamp(24px,4vw,32px);margin:0;color:var(--ink);}
+
+.statusseg{display:flex;background:var(--sand-2);border-radius:999px;padding:3px;border:1px solid var(--line);}
+.secstate{font-family:'DM Sans',sans-serif;font-size:11px;letter-spacing:.06em;color:var(--stone);border:1px solid var(--line);border-radius:999px;padding:4px 12px;white-space:nowrap;}
+.secstate.on{color:var(--gold-deep);border-color:var(--gold);background:var(--band-faint);}
+.segbtn{border:none;background:transparent;padding:7px 14px;border-radius:999px;font-size:13px;font-weight:500;color:var(--ink-soft);cursor:pointer;transition:.18s;}
+.segbtn.on.seg-todo{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08);}
+.segbtn.on.seg-doing{background:var(--gold);color:#2a1a05;}
+.segbtn.on.seg-done{background:var(--emerald);color:#fff;}
+
+.guide{display:flex;gap:11px;align-items:flex-start;background:linear-gradient(180deg,#fff7ea,#fdf1df);border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:0 12px 12px 0;padding:13px 15px;margin-bottom:20px;}
+.guideicon{flex:none;width:22px;height:22px;border-radius:50%;background:var(--gold);color:#2a1a05;display:grid;place-items:center;font-family:'Cormorant Garamond',serif;font-weight:600;font-size:14px;}
+.guide p{margin:0;font-size:14px;color:var(--ink-soft);font-style:italic;}
+
+.fieldgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.fieldstack{display:flex;flex-direction:column;gap:14px;}
+.field{display:flex;flex-direction:column;gap:6px;}
+.field.short{max-width:260px;}
+.field label{font-size:13px;font-weight:600;color:var(--ink);}
+textarea,input,select{font-family:'DM Sans',sans-serif;font-size:14px;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%;transition:border-color .15s,box-shadow .15s;}
+textarea{resize:vertical;}
+.bigtext{width:100%;}
+textarea::placeholder,input::placeholder{color:#b7a691;}
+textarea:focus,input:focus,select:focus{outline:none;border-color:var(--plum);box-shadow:0 0 0 3px rgba(108,43,77,.14);}
+
+.block{margin-top:24px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 16px 18px;}
+.blockhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;}
+.blockhead h3{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:17px;margin:0;color:var(--ink);}
+
+/* finance */
+.statcards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+.statcard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:13px 14px;display:flex;flex-direction:column;gap:5px;border-top:3px solid var(--stone);}
+.statcard.tone-capital{border-top-color:#7c8db0;}
+.statcard.tone-rev{border-top-color:var(--emerald);}
+.statcard.tone-exp{border-top-color:var(--danger);}
+.statcard.tone-pos{border-top-color:var(--gold);}
+.statcard.tone-neg{border-top-color:var(--danger);}
+.statlabel{font-size:11px;color:var(--ink-soft);letter-spacing:.02em;}
+.statvalue{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:20px;color:var(--ink);}
+.chartblock .betag{font-family:'DM Sans',sans-serif;font-size:11px;color:var(--plum);background:var(--sand-2);padding:3px 9px;border-radius:999px;}
+.chartwrap{width:100%;}
+.capfield{margin-bottom:14px;}
+.montable{display:flex;flex-direction:column;gap:6px;}
+.mrow{display:grid;grid-template-columns:1.4fr 1fr 1fr .9fr 30px;gap:8px;align-items:center;}
+.mrow.head span{font-family:'DM Sans',sans-serif;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--stone);padding-left:2px;}
+.mrow .mlabel{font-weight:500;}
+.mnet{font-family:'DM Sans',sans-serif;font-size:12px;text-align:right;padding-right:4px;}
+.mnet.pos{color:var(--emerald);} .mnet.neg{color:var(--danger);}
+
+.rows{display:flex;flex-direction:column;gap:8px;}
+.row{display:flex;gap:8px;align-items:center;}
+.row .grow{flex:1;min-width:0;}
+.row .pct{width:74px;flex:none;text-align:center;}
+.row .type{width:120px;flex:none;}
+.crmstatus{width:132px;flex:none;cursor:pointer;}
+.del{flex:none;width:30px;height:30px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--ink-soft);font-size:18px;line-height:1;cursor:pointer;transition:.15s;padding:0;}
+.del:hover{background:var(--danger);color:#fff;border-color:var(--danger);}
+.addrow{margin-top:10px;background:transparent;border:1px dashed var(--line);color:var(--plum);border-radius:9px;padding:8px 12px;font-size:13px;font-weight:500;cursor:pointer;transition:.15s;}
+.addrow:hover{border-color:var(--plum);background:var(--sand-2);}
+.total{font-family:'DM Sans',sans-serif;font-size:12px;color:var(--emerald);} .total.over{color:var(--danger);}
+
+.entryinput{display:flex;flex-direction:column;gap:10px;}
+.inputrow{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+.kindtoggle{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;flex:none;}
+.kindtoggle button{border:none;background:transparent;padding:7px 14px;font-size:13px;color:var(--ink-soft);cursor:pointer;transition:.15s;}
+.kindtoggle button.on{background:var(--plum);color:#fff;}
+.kindtoggle button.jalon.on{background:var(--gold);color:#2a1a05;}
+.secselect{width:auto;min-width:150px;flex:none;cursor:pointer;}
+.addbtn{align-self:flex-start;background:var(--ink);color:#fff;border:none;border-radius:9px;padding:9px 18px;font-size:14px;font-weight:500;cursor:pointer;transition:.15s;}
+.addbtn:hover{background:var(--plum);}
+
+.filterbar{display:flex;gap:6px;overflow-x:auto;margin:18px 0 14px;padding-bottom:4px;}
+.filterbar button{flex:none;background:transparent;border:1px solid var(--line);border-radius:999px;padding:6px 13px;font-size:13px;color:var(--ink-soft);cursor:pointer;white-space:nowrap;transition:.15s;}
+.filterbar button.on{background:var(--ink);color:#fff;border-color:var(--ink);}
+
+.entries{list-style:none;margin:12px 0 0;padding:0;display:flex;flex-direction:column;gap:10px;}
+.entry{position:relative;background:var(--card);border:1px solid var(--line);border-left:3px solid var(--stone);border-radius:0 12px 12px 0;padding:12px 40px 12px 14px;}
+.entry.isjalon{border-left-color:var(--gold);background:linear-gradient(180deg,#fffaf0,#fff6e6);}
+.entrymeta{display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;}
+.entrymeta time{font-family:'DM Sans',sans-serif;font-size:11px;color:var(--ink-soft);}
+.jalonbadge{font-family:'DM Sans',sans-serif;font-size:10px;letter-spacing:.08em;text-transform:uppercase;background:var(--gold);color:#2a1a05;padding:2px 7px;border-radius:999px;}
+.secbadge{font-size:11px;color:var(--plum);background:var(--sand-2);padding:2px 8px;border-radius:999px;}
+.entrytext{margin:0;font-size:14px;color:var(--ink);white-space:pre-wrap;}
+.entrydel{position:absolute;top:10px;right:10px;width:26px;height:26px;font-size:16px;}
+.empty{color:var(--ink-soft);font-style:italic;font-size:14px;padding:8px 0;}
+
+/* roadmap */
+.roadmap{display:flex;flex-direction:column;gap:16px;}
+.rmbar{display:flex;justify-content:space-between;align-items:center;}
+.rmcount{font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink-soft);}
+.rmedit{background:transparent;border:1px solid var(--line);color:var(--plum);border-radius:999px;padding:6px 14px;font-size:13px;font-weight:500;cursor:pointer;transition:.15s;}
+.rmedit:hover{background:var(--sand-2);}
+.rmedit.on{background:var(--plum);color:#fff;border-color:var(--plum);}
+.phase{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 16px 14px;position:relative;overflow:hidden;}
+.phase::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--plum);}
+.phase.complete::before{background:var(--emerald);}
+.phasehead{margin-bottom:12px;padding-left:6px;}
+.phasenum{position:absolute;right:14px;top:12px;font-family:'Cormorant Garamond',serif;font-size:30px;font-weight:600;color:var(--sand-2);line-height:1;}
+.phasetop{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.ptagchip{font-family:'DM Sans',sans-serif;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--plum);background:var(--sand-2);padding:3px 9px;border-radius:999px;}
+.phasetop h3{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:19px;margin:0;color:var(--ink);}
+.ptimechip{font-family:'DM Sans',sans-serif;font-size:11px;color:var(--gold-deep);}
+.psubtxt{margin:5px 0 8px;font-size:13px;color:var(--ink-soft);}
+.phasebar{height:5px;background:var(--sand-2);border-radius:999px;overflow:hidden;max-width:280px;}
+.phasefill{height:100%;background:linear-gradient(90deg,var(--gold),var(--emerald));border-radius:999px;transition:width .4s ease;}
+.phaseedit{display:flex;flex-direction:column;gap:6px;position:relative;padding-right:34px;}
+.phaseedit .ptag{max-width:120px;} .phaseedit input{font-size:13px;}
+.phasedel{position:absolute;right:0;top:0;}
+
+.features{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;}
+.feature{border:1px solid var(--line);border-radius:10px;background:#fffdf8;transition:border-color .15s;}
+.feature.open{border-color:var(--gold);}
+.feature.done{background:#f4f8f2;}
+.featurerow{display:flex;align-items:center;gap:10px;padding:4px 6px;}
+.donedot{flex:none;width:22px;height:22px;border-radius:50%;border:1.5px solid var(--band-line);background:#fff;color:#fff;font-size:12px;line-height:1;cursor:pointer;display:grid;place-items:center;transition:.15s;padding:0;}
+.donedot.on{background:var(--emerald);border-color:var(--emerald);}
+.fname.btn{flex:1;display:flex;justify-content:space-between;align-items:center;gap:8px;background:transparent;border:none;text-align:left;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:14px;font-weight:500;color:var(--ink);padding:8px 6px;width:auto;}
+.feature.done .fnametext{text-decoration:line-through;color:var(--ink-soft);text-decoration-color:var(--emerald);}
+.chev{flex:none;font-family:'DM Sans',sans-serif;color:var(--gold-deep);font-size:16px;width:16px;text-align:center;}
+.fname.btn .fnametext{flex:1;text-align:left;}
+input.fname{flex:1;font-weight:500;}
+.fdesc{margin:0;padding:0 12px 12px 40px;font-size:13px;color:var(--ink-soft);animation:rise .2s ease;}
+.fdesc-edit{margin:0 8px 8px 38px;width:calc(100% - 46px);}
+.addphase{background:transparent;border:1px dashed var(--plum);color:var(--plum);border-radius:11px;padding:10px 14px;font-size:14px;font-weight:500;cursor:pointer;transition:.15s;}
+.addphase:hover{background:var(--sand-2);}
+
+/* roadmap timeline + segments */
+.rmtimeline{display:flex;align-items:stretch;gap:10px;margin:4px 0 6px;}
+.tlall{flex:none;align-self:center;background:transparent;border:1px solid var(--line);border-radius:999px;padding:8px 14px;font-size:13px;font-weight:500;color:var(--ink-soft);cursor:pointer;transition:.15s;}
+.tlall.on{background:var(--ink);color:#fff;border-color:var(--ink);}
+.tlaxis{flex:1;display:flex;gap:0;overflow-x:auto;position:relative;padding:6px 2px;}
+.tlaxis::before{content:"";position:absolute;left:14px;right:14px;top:16px;height:2px;background:var(--line);}
+.tlnode{position:relative;flex:1;min-width:110px;display:flex;flex-direction:column;align-items:flex-start;gap:3px;background:transparent;border:none;cursor:pointer;padding:0 8px;text-align:left;}
+.tldot{width:14px;height:14px;border-radius:50%;background:var(--sand);border:2px solid var(--band-line);z-index:1;transition:.2s;}
+.tlnode.done .tldot{background:var(--emerald);border-color:var(--emerald);}
+.tlnode.on .tldot{border-color:var(--gold);background:var(--gold);box-shadow:0 0 0 4px rgba(199,154,59,.22);}
+.tltag{font-family:'DM Sans',sans-serif;font-size:11px;letter-spacing:.04em;color:var(--ink-soft);transition:.15s;}
+.tlnode.on .tltag{color:var(--plum);font-weight:700;}
+.tltime{font-size:11px;color:var(--stone);}
+
+.seglegend{display:flex;flex-wrap:wrap;gap:7px;margin:2px 0 4px;}
+.segchip{font-size:11px;padding:3px 9px;border-radius:999px;border:1px solid;white-space:nowrap;line-height:1.4;}
+.segchip.mini{font-size:10px;padding:2px 7px;flex:none;}
+.feditrow{display:flex;flex-direction:column;gap:8px;margin:0 8px 8px 38px;}
+.segselect{max-width:200px;}
+
+/* competitors */
+.competitors{display:flex;flex-direction:column;gap:16px;}
+.cmpscroll{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--card);}
+.cmptable{border-collapse:collapse;width:100%;min-width:560px;font-size:13px;}
+.cmptable th,.cmptable td{border:1px solid var(--line);padding:9px 11px;text-align:left;vertical-align:top;}
+.cmptable thead th{background:var(--sand-2);font-family:'DM Sans',sans-serif;font-weight:600;color:var(--ink);position:sticky;top:0;}
+.cmptable .critcol{background:#fbf4e8;font-weight:600;color:var(--ink);white-space:nowrap;position:sticky;left:0;z-index:1;}
+.cmptable thead .critcol{z-index:2;}
+.cmptable .uscol{background:#f7efff;}
+.cmptable thead th.uscol{background:var(--plum);color:#fff;}
+.cellval{white-space:pre-line;color:var(--ink-soft);}
+.cmptable .uscol .cellval{color:var(--ink);}
+.thedit{display:flex;gap:6px;align-items:center;}
+.thedit input{min-width:90px;font-size:12px;padding:6px 8px;}
+.cmptable td textarea{font-size:12px;padding:6px 8px;min-width:120px;}
+.cmpbtns{display:flex;gap:8px;}
+.cmpbtns .addrow{margin-top:0;}
+
+.edge{display:flex;gap:12px;align-items:flex-start;background:linear-gradient(180deg,#fff7ea,#fdf1df);border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:0 12px 12px 0;padding:14px 16px;}
+.edgeicon{flex:none;width:26px;height:26px;border-radius:50%;background:var(--gold);color:#2a1a05;display:grid;place-items:center;font-size:14px;}
+.edgebody{flex:1;}
+.edgelabel{margin:0 0 4px;font-family:'Cormorant Garamond',serif;font-weight:600;font-size:15px;color:var(--ink);}
+.edgetext{margin:0;font-size:14px;color:var(--ink-soft);}
+
+/* hypotheses */
+.hyp{display:flex;flex-direction:column;gap:12px;}
+/* assumptions map */
+.amap{background:var(--sand-2);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin-bottom:4px;}
+.amaphead{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:10px;}
+.amaphead h3{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:19px;margin:0;color:var(--ink);}
+.amaphint{font-size:12px;color:var(--ink-soft);}
+.amapwrap{display:flex;gap:8px;align-items:stretch;}
+.amapy{writing-mode:vertical-rl;transform:rotate(180deg);text-align:center;font-family:'DM Sans',sans-serif;font-size:11px;letter-spacing:.1em;color:var(--stone);flex:none;}
+.amapmain{flex:1;min-width:0;}
+.amapgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.amapcell{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;min-height:96px;display:flex;flex-direction:column;gap:6px;}
+.amapcell.prio{background:var(--band-faint);border-color:var(--gold);}
+.amapqlabel{font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:var(--ink);}
+.amapqlabel span{font-weight:400;color:var(--stone);}
+.amapcell.prio .amapqlabel{color:var(--gold-deep);}
+.amapchips{display:flex;flex-wrap:wrap;gap:5px;}
+.amapempty{color:var(--band-line);font-size:13px;}
+.achip{background:var(--sand);border:1px solid var(--line);border-radius:999px;padding:3px 9px;font-family:'DM Sans',sans-serif;font-size:11px;color:var(--ink);cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.achip:hover{border-color:var(--gold);color:var(--gold-deep);}
+.amapx{text-align:center;font-family:'DM Sans',sans-serif;font-size:11px;letter-spacing:.1em;color:var(--stone);margin-top:6px;}
+.hcard{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--stone);border-radius:0 12px 12px 0;padding:12px 14px;}
+.hhead{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.hstat,.htype{font-size:11px;padding:3px 9px;border-radius:999px;border:1px solid;white-space:nowrap;flex:none;}
+.hclaimbtn{flex:1;min-width:180px;display:flex;justify-content:space-between;align-items:center;gap:8px;background:transparent;border:none;text-align:left;cursor:pointer;padding:6px 2px;font-family:'DM Sans',sans-serif;font-size:14px;font-weight:500;color:var(--ink);width:auto;}
+.hclaimtext{flex:1;}
+.hbody{display:flex;flex-direction:column;gap:12px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line);animation:rise .2s ease;}
+.hselrow{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.hbody .field label{font-size:12px;color:var(--ink-soft);font-weight:600;}
+.hdel{width:auto;height:auto;padding:7px 14px;font-size:13px;align-self:flex-start;border-radius:8px;}
+@media (max-width:640px){ .hselrow{grid-template-columns:1fr;} }
+
+/* business model canvas */
+.bmc{display:flex;flex-direction:column;gap:12px;}
+.bmchint{font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink-soft);}
+.bmcgrid{
+  display:grid;gap:10px;
+  grid-template-columns:repeat(5,1fr);
+  grid-auto-rows:minmax(128px,1fr);
+  grid-template-areas:
+    "prob sol uvp adv seg"
+    "prob met uvp cha seg"
+    "cost cost cost rev rev";
+}
+.area-prob{grid-area:prob;} .area-sol{grid-area:sol;} .area-met{grid-area:met;}
+.area-uvp{grid-area:uvp;} .area-adv{grid-area:adv;} .area-cha{grid-area:cha;}
+.area-seg{grid-area:seg;} .area-cost{grid-area:cost;} .area-rev{grid-area:rev;}
+.bmccell{display:flex;flex-direction:column;gap:8px;align-items:stretch;text-align:left;background:var(--card);border:1px solid var(--line);border-top:3px solid var(--stone);border-radius:12px;padding:12px;cursor:pointer;transition:.15s;overflow:hidden;font-family:'DM Sans',sans-serif;}
+.bmccell:hover{box-shadow:0 3px 14px rgba(13,13,11,.1);transform:translateY(-1px);}
+.bmccell.tone-left{border-top-color:#6c2b4d;} .bmccell.tone-value{border-top-color:#c79a3b;background:#fffaef;}
+.bmccell.tone-right{border-top-color:#2f8a9a;} .bmccell.tone-cost{border-top-color:#b5462a;} .bmccell.tone-rev{border-top-color:#2d7a5f;}
+.bmccell.filled{background:#fffdf7;}
+.bmccell.tone-value.filled{background:#fff6e2;}
+.bmctop{display:flex;align-items:center;gap:8px;}
+.bmcicon{font-size:16px;flex:none;}
+.bmctitle{font-weight:600;font-size:13px;color:var(--ink);line-height:1.2;}
+.bmcpreview{font-size:12px;color:var(--ink-soft);white-space:pre-line;overflow:hidden;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;}
+.bmcempty{font-size:12px;color:var(--stone);font-style:italic;}
+
+.bmcmodal-scrim{position:fixed;inset:0;background:rgba(13,13,11,.45);z-index:60;display:flex;align-items:center;justify-content:center;padding:20px;}
+.bmcmodal{background:var(--card);border-radius:16px;max-width:560px;width:100%;padding:20px 20px 18px;border-top:4px solid var(--stone);box-shadow:0 20px 50px rgba(13,13,11,.3);animation:rise .2s ease;}
+.bmcmodal.tone-left{border-top-color:#6c2b4d;} .bmcmodal.tone-value{border-top-color:#c79a3b;}
+.bmcmodal.tone-right{border-top-color:#2f8a9a;} .bmcmodal.tone-cost{border-top-color:#b5462a;} .bmcmodal.tone-rev{border-top-color:#2d7a5f;}
+.bmcmodalhead{display:flex;align-items:center;gap:10px;margin-bottom:6px;}
+.bmcicon.big{font-size:22px;}
+.bmcmodalhead h3{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:20px;margin:0;color:var(--ink);}
+.bmcclose{margin-left:auto;background:transparent;border:none;font-size:24px;line-height:1;color:var(--ink-soft);cursor:pointer;padding:0 4px;}
+.bmcclose:hover{color:var(--ink);}
+.bmcmodalq{margin:0 0 12px;font-size:13px;color:var(--ink-soft);font-style:italic;}
+.bmcmodaltext{width:100%;}
+.bmcmodalfoot{display:flex;justify-content:flex-end;margin-top:12px;}
+
+@media (max-width:860px){
+  .bmcgrid{grid-template-columns:1fr;grid-auto-rows:auto;grid-template-areas:"prob" "sol" "met" "uvp" "adv" "cha" "seg" "cost" "rev";}
+  .bmccell{min-height:auto;}
+  .bmcpreview{-webkit-line-clamp:3;}
+}
+
+/* pricing */
+.pricing{display:flex;flex-direction:column;gap:14px;}
+.pricegrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:start;}
+.pricecard{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 15px;display:flex;flex-direction:column;gap:8px;position:relative;}
+.pricecard.featured{border-color:var(--gold);box-shadow:0 6px 22px rgba(199,154,59,.18);background:#fffaef;}
+.pricetag{position:absolute;top:-10px;left:15px;font-family:'DM Sans',sans-serif;font-size:10px;letter-spacing:.06em;text-transform:uppercase;background:var(--gold);color:#2a1a05;padding:3px 10px;border-radius:999px;}
+.pricecible{margin:0;font-family:'DM Sans',sans-serif;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--plum);}
+.pricename{margin:0;font-family:'Cormorant Garamond',serif;font-weight:600;font-size:20px;color:var(--ink);}
+.priceval{margin:0 0 4px;font-family:'Cormorant Garamond',serif;font-weight:600;font-size:24px;color:var(--ink);}
+.priceper{font-family:'DM Sans',sans-serif;font-size:12px;font-weight:400;color:var(--ink-soft);}
+.pricefeatures{list-style:none;margin:4px 0 0;padding:0;display:flex;flex-direction:column;gap:7px;}
+.pricefeatures li{position:relative;padding-left:20px;font-size:13px;color:var(--ink-soft);}
+.pricefeatures li::before{content:"✓";position:absolute;left:0;top:0;color:var(--emerald);font-weight:700;}
+.priceedit{display:flex;flex-direction:column;gap:6px;}
+.priceedit label{font-size:12px;font-weight:600;color:var(--ink);margin-top:4px;}
+.priceedit label.featline{display:flex;align-items:center;gap:8px;font-weight:500;margin-top:8px;}
+.priceedit label.featline input{width:auto;}
+.priceedit input{font-size:13px;padding:8px 10px;}
+.featrow{display:flex;gap:6px;align-items:center;}
+.featrow input{flex:1;}
+.tierdel{width:auto;height:auto;padding:8px 12px;font-size:13px;border-radius:8px;margin-top:8px;}
+@media (max-width:860px){ .pricegrid{grid-template-columns:1fr 1fr;} }
+@media (max-width:560px){ .pricegrid{grid-template-columns:1fr;} }
+
+/* produit */
+.produit{display:flex;flex-direction:column;gap:14px;}
+.prodintro{font-family:'Cormorant Garamond',serif;font-size:17px;font-weight:400;line-height:1.5;color:var(--ink);margin:0;}
+.prodintro-edit{width:100%;}
+.prodsub{margin:6px 0 -2px;font-family:'DM Sans',sans-serif;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold-deep);}
+.briques{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
+.brique{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:6px;}
+.briqueicon{font-size:22px;}
+.briquetitle{font-weight:600;font-size:14px;color:var(--ink);}
+.briquedesc{font-size:13px;color:var(--ink-soft);}
+.briquehead,.stephead{display:flex;gap:6px;align-items:center;}
+.bicon{width:44px;flex:none;text-align:center;padding:8px 4px;}
+.btitle{flex:1;font-weight:600;}
+.briqueedit,.stepedit{display:flex;flex-direction:column;gap:6px;}
+
+.parcours{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px;counter-reset:none;}
+.pstep{display:flex;gap:12px;align-items:flex-start;}
+.pnum{flex:none;width:28px;height:28px;border-radius:50%;background:var(--plum);color:#fff;display:grid;place-items:center;font-family:'Cormorant Garamond',serif;font-weight:600;font-size:14px;margin-top:2px;}
+.pbody{flex:1;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:11px 13px;display:flex;flex-direction:column;gap:4px;}
+.ptop{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.picon{font-size:16px;}
+.ptitle{font-weight:600;font-size:14px;color:var(--ink);}
+.pbadge{font-family:'DM Sans',sans-serif;font-size:10px;letter-spacing:.04em;background:var(--sand-2);color:var(--plum);padding:2px 8px;border-radius:999px;}
+.pdesc{font-size:13px;color:var(--ink-soft);}
+.pbadgein{font-size:12px;}
+
+.stackchips{display:flex;flex-wrap:wrap;gap:8px;}
+.stackchip{font-family:'DM Sans',sans-serif;font-size:12px;background:var(--ink);color:var(--sand);padding:6px 12px;border-radius:8px;}
+.stackedit{display:flex;flex-direction:column;gap:6px;max-width:320px;}
+.prodrenvoi{margin:4px 0 0;font-size:13px;color:var(--ink-soft);font-style:italic;}
+@media (max-width:820px){ .briques{grid-template-columns:1fr 1fr;} }
+@media (max-width:560px){ .briques{grid-template-columns:1fr;} }
+
+/* dév technique */
+.tech{display:flex;flex-direction:column;gap:4px;}
+.techrow{flex-wrap:wrap;}
+.techstatus{width:130px;flex:none;cursor:pointer;}
+.techdate{width:110px;flex:none;}
+@media (max-width:560px){
+  .techrow .grow{flex-basis:100%;}
+  .techstatus,.techdate{flex:1;}
+}
+/* segments & personas */
+.segper{display:flex;flex-direction:column;gap:4px;}
+.segrow{flex-wrap:wrap;}
+.segtype{width:88px;flex:none;cursor:pointer;}
+.segrow .grow2{flex:2;min-width:160px;}
+@media (max-width:560px){ .segrow .grow,.segrow .grow2{flex-basis:100%;} .segrow .segtype{flex:1;} }
+.miniaction{background:transparent;border:1px solid var(--gold);color:var(--gold-deep);border-radius:999px;padding:5px 12px;font-family:'DM Sans',sans-serif;font-size:12px;cursor:pointer;}
+.miniaction:hover{background:var(--band-faint);}
+.percards{display:flex;flex-direction:column;gap:12px;}
+.percard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;}
+.perhead{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;}
+.pername{flex:1;min-width:120px;font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:600;}
+.pertag{flex:1;min-width:120px;font-style:italic;}
+.perlbl{display:block;font-size:11px;letter-spacing:.06em;color:var(--stone);margin:8px 0 3px;}
+/* réunions & ateliers */
+.mtglist{display:flex;flex-direction:column;gap:12px;}
+.mtgcard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;}
+.mtgtop{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;}
+.mtgdate{width:120px;flex:none;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink-soft);}
+.mtgtitle{flex:1;min-width:160px;font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:600;}
+.mtgnotes{width:100%;}
+/* pages & thématiques (réunions/ateliers) */
+.backbtn{background:transparent;border:none;color:var(--plum);font-family:'DM Sans',sans-serif;font-size:14px;cursor:pointer;padding:0;}
+.backbtn:hover{color:var(--gold-deep);}
+.ghostdel{background:transparent;border:1px solid var(--line);color:var(--stone);border-radius:8px;padding:5px 12px;font-size:12px;cursor:pointer;}
+.ghostdel:hover{color:var(--danger);border-color:var(--danger);}
+.pageedit{display:flex;flex-direction:column;gap:10px;}
+.pagetitle{font-family:'Cormorant Garamond',serif;font-size:24px;font-weight:600;border:none;border-bottom:1px solid var(--band-line);border-radius:0;padding:6px 2px;}
+.pagetitle:focus{border-bottom-color:var(--gold);box-shadow:none;}
+.pagedate{width:160px;font-size:12px;color:var(--ink-soft);}
+.themerow{display:flex;flex-direction:column;gap:6px;}
+.themechips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
+.themechip{display:inline-flex;align-items:center;gap:5px;background:var(--band-faint);border:1px solid var(--gold);color:var(--gold-deep);border-radius:999px;padding:3px 10px;font-size:12px;}
+.themechip.sm{background:var(--sand-2);border-color:var(--line);color:var(--stone);}
+.themechip button{background:none;border:none;color:inherit;cursor:pointer;font-size:13px;line-height:1;padding:0;}
+.themeadd{display:flex;gap:8px;}
+.themeadd input{flex:1;max-width:280px;}
+.related{margin-top:6px;border-top:1px solid var(--line);padding-top:12px;}
+.relatedlist{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px;}
+.relatedlist li{display:flex;justify-content:space-between;gap:10px;padding:8px 10px;background:var(--card);border:1px solid var(--line);border-radius:9px;cursor:pointer;}
+.relatedlist li:hover{border-color:var(--gold);}
+.reltitle{font-weight:500;color:var(--ink);}
+.reldate{font-size:12px;color:var(--stone);}
+.themefilter{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;}
+.tfchip{background:var(--card);border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:12px;color:var(--ink-soft);cursor:pointer;}
+.tfchip.on{background:var(--ink);color:var(--sand);border-color:var(--ink);}
+.pagelist{display:flex;flex-direction:column;gap:8px;}
+.pagerow{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:11px;padding:12px 14px;cursor:pointer;transition:.12s;}
+.pagerow:hover{border-color:var(--gold);box-shadow:0 2px 10px rgba(13,13,11,.06);}
+.pagerowtitle{font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:600;color:var(--ink);}
+.pagerowmeta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.pagerowdate{font-size:12px;color:var(--stone);}
+/* notes editor (markdown) */
+.ned{display:flex;flex-direction:column;gap:6px;}
+.nedbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.nedbar button{background:var(--card);border:1px solid var(--line);border-radius:7px;padding:4px 10px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink);cursor:pointer;}
+.nedbar button:hover{border-color:var(--gold);}
+.nedspacer{flex:1;}
+.nedtab.on{background:var(--ink);color:var(--sand);border-color:var(--ink);}
+.nedpreview{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:14px;line-height:1.6;color:var(--ink);}
+.nedpreview h2{font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:600;margin:8px 0 4px;}
+.nedpreview h3{font-family:'Cormorant Garamond',serif;font-size:17px;font-weight:600;margin:8px 0 4px;}
+.nedpreview h4{font-size:14px;font-weight:600;margin:6px 0 3px;}
+.nedpreview p{margin:0 0 6px;}
+.nedpreview ul{margin:4px 0 8px;padding-left:20px;}
+.nedpreview li{margin:2px 0;}
+.nedpreview strong{font-weight:600;}
+.nedempty{color:var(--stone);font-style:italic;}
+/* interviews */
+.itwlist{display:flex;flex-direction:column;gap:12px;}
+.itwcard{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--band-line);border-radius:0 12px 12px 0;padding:14px;}
+.itwcard.itw-planned{border-left-color:var(--gold);}
+.itwcard.itw-done{border-left-color:var(--emerald);}
+.itwtop{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;}
+.itwdate{width:118px;flex:none;font-size:12px;color:var(--ink-soft);}
+.itwperson{flex:2;min-width:150px;font-family:'Cormorant Garamond',serif;font-size:17px;font-weight:600;}
+.itwseg{flex:1;min-width:110px;}
+.itwstatus{width:120px;flex:none;cursor:pointer;}
+@media (max-width:560px){ .itwtop input,.itwtop select{flex-basis:100%;width:100%;} }
+
+/* overview */
+.overview{animation:rise .3s ease;}
+.ovhead{display:flex;gap:16px;align-items:center;margin-bottom:22px;flex-wrap:wrap;}
+.ovcrown{width:130px;flex:none;}
+.ovheadtext{flex:1;min-width:200px;}
+.ovheadtext h2{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:clamp(24px,4vw,32px);margin:0 0 8px;color:var(--ink);}
+.ovprog{display:flex;align-items:center;gap:10px;max-width:360px;}
+.ovprog .progbar{flex:1;height:9px;}
+.ovpct{font-family:'DM Sans',sans-serif;font-size:13px;color:var(--gold-deep);}
+.ovcounts{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
+.ovc{font-family:'DM Sans',sans-serif;font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);}
+.ovc.done{color:var(--emerald);border-color:#bfe0cf;}
+.ovc.doing{color:var(--gold-deep);border-color:#ead9a8;}
+.ovc.todo{color:var(--ink-soft);}
+
+.kanban{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:6px;}
+.kancol{background:var(--sand-2);border:1px solid var(--line);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:8px;}
+.kancolhead{display:flex;justify-content:space-between;align-items:center;font-family:'DM Sans',sans-serif;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);padding:2px 4px;}
+.col-todo .kancolhead{color:var(--ink-soft);}
+.col-doing .kancolhead{color:var(--gold-deep);}
+.col-done .kancolhead{color:var(--emerald);}
+.kancount{background:#fff;border:1px solid var(--line);border-radius:999px;padding:1px 8px;font-size:11px;}
+.kancards{display:flex;flex-direction:column;gap:8px;min-height:20px;}
+.kanempty{text-align:center;color:var(--stone);margin:6px 0;}
+.kancard{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;cursor:pointer;transition:.15s;display:flex;flex-direction:column;gap:6px;}
+.kancard:hover{box-shadow:0 3px 12px rgba(13,13,11,.1);transform:translateY(-1px);}
+.kangroup{font-family:'DM Sans',sans-serif;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold-deep);}
+.kanlabel{font-size:14px;font-weight:600;color:var(--ink);}
+.kanmove{display:flex;gap:4px;}
+.kanmovebtn{width:26px;height:22px;border:1px solid var(--line);background:#fff;border-radius:6px;cursor:pointer;font-size:11px;line-height:1;color:var(--stone);padding:0;transition:.12s;}
+.kanmovebtn.m-todo.on{background:var(--stone);color:#fff;border-color:var(--stone);}
+.kanmovebtn.m-doing.on{background:var(--gold);color:#2a1a05;border-color:var(--gold);}
+.kanmovebtn.m-done.on{background:var(--emerald);color:#fff;border-color:var(--emerald);}
+
+.ovtasks{display:flex;flex-direction:column;gap:12px;}
+.ovtask{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 15px;}
+.ovtaskhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}
+.ovtaskhead h3{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:16px;margin:0;color:var(--ink);}
+.ovlink{background:transparent;border:none;color:var(--plum);font-size:12px;font-family:'DM Sans',sans-serif;cursor:pointer;}
+.ovlink:hover{text-decoration:underline;}
+.ovlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;}
+.ovlist li{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--ink);cursor:pointer;padding:6px 8px;border-radius:8px;transition:.12s;}
+.ovlist li:hover{background:var(--sand-2);}
+.ovstatus{flex:none;font-family:'DM Sans',sans-serif;font-size:10px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--ink-soft);}
+.ovstatus.s-doing{color:var(--gold-deep);border-color:#ead9a8;}
+.ovphase{flex:1;font-weight:500;}
+.ovphaseprog{display:flex;align-items:center;gap:8px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink-soft);}
+.miniprog{width:70px;height:6px;background:var(--sand-2);border-radius:999px;overflow:hidden;}
+.minifill{display:block;height:100%;background:linear-gradient(90deg,var(--gold),var(--emerald));}
+.ovnav{margin-bottom:10px;}
+.ovnav .navdot.star{color:var(--gold-deep);}
+
+@media (max-width:640px){
+  .kanban{grid-template-columns:1fr;}
+  .ovcrown{width:100px;}
+}
+
+/* focus */
+.focus{display:flex;gap:18px;align-items:flex-start;background:#efe4d0;border:1px solid var(--line);border-radius:16px;padding:18px 18px 20px;margin-bottom:22px;flex-wrap:wrap;}
+.today{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px 18px;margin-bottom:16px;}
+.todayhead{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;}
+.todaylabel{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:22px;color:var(--ink);}
+.todaydate{font-size:12px;color:var(--stone);letter-spacing:.04em;}
+.todaytext{width:100%;}
+.todayrow{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap;}
+.starthere{background:var(--ink);color:var(--sand);border:none;border-radius:9px;padding:9px 16px;font-family:'DM Sans',sans-serif;font-size:14px;font-weight:500;cursor:pointer;transition:.15s;}
+.starthere:hover{background:var(--gold);color:#2a1a05;}
+.ovhelp{font-size:13px;color:var(--ink-soft);margin:2px 0 12px;}
+.donut{width:64px;height:64px;flex:none;}
+.donuttext{font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;fill:var(--ink);}
+.ovcountline{font-size:13px;color:var(--ink-soft);margin:0 0 6px;}
+.todaytop{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;}
+.todayq{font-family:'Cormorant Garamond',serif;font-style:italic;font-size:19px;color:var(--ink);margin:0 0 6px;line-height:1.3;}
+.todayline{width:100%;background:transparent;border:none;border-bottom:1px solid var(--band-line);border-radius:0;padding:6px 2px;font-family:'DM Sans',sans-serif;font-size:14px;color:var(--ink);resize:vertical;}
+.todayline:focus{outline:none;border-bottom-color:var(--gold);box-shadow:none;}
+.todayadd{background:transparent;border:none;color:var(--gold-deep);font-family:'DM Sans',sans-serif;font-size:14px;font-weight:500;cursor:pointer;padding:4px 2px;}
+.todayadd:hover:not(:disabled){text-decoration:underline;}
+.todayadd:disabled{color:var(--stone);cursor:default;}
+.ovblocktitle{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:21px;color:var(--ink);margin:8px 0 0;}
+/* to-do */
+.todoblock{margin:8px 0 6px;}
+.todohead{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;}
+.notionlink{font-family:'DM Sans',sans-serif;font-size:12px;color:var(--plum);text-decoration:none;border-bottom:1px solid var(--line);}
+.notionlink:hover{color:var(--gold-deep);border-color:var(--gold);}
+.todoadd{display:flex;gap:8px;margin:10px 0 10px;}
+.todoadd input{flex:1;}
+.todolist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;}
+.todoitem{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:8px 10px;}
+.todocheck{flex:none;width:20px;height:20px;border-radius:5px;border:1.5px solid var(--band-line);background:#fff;color:#fff;font-size:12px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.todoitem.done .todocheck{background:var(--emerald);border-color:var(--emerald);}
+.todotext{flex:1;font-size:14px;color:var(--ink);cursor:pointer;}
+.todoitem.done .todotext{text-decoration:line-through;color:var(--stone);}
+.nextaction{margin:14px 0 0;font-size:13px;color:var(--ink);cursor:pointer;}
+.nextaction:hover{color:var(--gold-deep);}
+.nalabel{font-size:11px;letter-spacing:.06em;color:var(--stone);margin-right:6px;}
+.focusbody{flex:1;min-width:220px;}
+.focusbody h2{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:clamp(22px,4vw,30px);margin:0 0 8px;color:var(--ink);}
+.focusrow{margin-top:14px;}
+.flabel{display:block;font-family:'DM Sans',sans-serif;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold-deep);margin-bottom:6px;}
+.fchips{display:flex;flex-wrap:wrap;gap:7px;}
+.fchip{background:var(--card);border:1px solid var(--gold);color:var(--plum);border-radius:999px;padding:6px 13px;font-size:13px;font-weight:500;cursor:pointer;transition:.15s;}
+.fchip:hover{background:var(--gold);color:#2a1a05;}
+.fmuted{font-size:13px;color:var(--ink-soft);font-style:italic;}
+.factions{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;}
+.factions li{display:flex;align-items:center;gap:9px;font-size:14px;color:var(--ink);cursor:pointer;padding:7px 10px;background:var(--card);border:1px solid var(--line);border-radius:9px;transition:.12s;}
+.factions li:hover{border-color:var(--plum);}
+.factag{flex:none;font-family:'DM Sans',sans-serif;font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--plum);background:var(--sand-2);padding:2px 8px;border-radius:999px;}
+
+/* status map */
+.statusmap{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:4px;}
+.smtile{display:flex;align-items:center;gap:9px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 11px;cursor:pointer;text-align:left;transition:.12s;}
+.smtile:hover{box-shadow:0 2px 10px rgba(13,13,11,.08);transform:translateY(-1px);}
+.smdot{flex:none;width:10px;height:10px;border-radius:50%;background:var(--stone);}
+.smtile.st-doing .smdot{background:var(--gold);}
+.smtile.st-done .smdot{background:var(--emerald);}
+.smtext{display:flex;flex-direction:column;min-width:0;}
+.smlabel{font-size:13px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.smgroup{font-family:'DM Sans',sans-serif;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--stone);}
+
+/* chronologie — frise horizontale (jalons) */
+.frise{overflow-x:auto;padding:6px 2px 10px;-webkit-overflow-scrolling:touch;}
+.frise::-webkit-scrollbar{height:6px;}
+.frise::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px;}
+.frisetrack{display:flex;min-width:min-content;}
+.fstep{flex:0 0 auto;width:160px;display:flex;flex-direction:column;align-items:center;text-align:center;cursor:pointer;padding:0 4px;}
+.fstep:hover .ftext{color:var(--plum);}
+.fstep:hover .fdot{transform:scale(1.15);}
+.fdate{font-family:'DM Sans',sans-serif;font-size:11px;color:var(--ink-soft);margin-bottom:8px;white-space:nowrap;}
+.fmid{position:relative;width:100%;height:18px;display:flex;align-items:center;justify-content:center;}
+.fmid::before{content:"";position:absolute;left:0;right:0;top:50%;height:2px;background:var(--band-line);transform:translateY(-50%);}
+.frise.multi .fstep:first-child .fmid::before{left:50%;}
+.frise.multi .fstep:last-child .fmid::before{right:50%;}
+.fdot{position:relative;z-index:1;width:15px;height:15px;border-radius:50%;background:var(--gold);border:3px solid var(--sand);box-shadow:0 0 0 2px rgba(199,154,59,.25);transition:transform .15s;}
+.ftext{margin-top:8px;font-size:12px;color:var(--ink);line-height:1.35;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+
+@media (max-width:860px){
+  .mobiletop{display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:30;background:var(--sand);border-bottom:1px solid var(--line);padding:10px 14px;}
+  .mwordmark{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:18px;flex:1;}
+  .mpct{font-family:'DM Sans',sans-serif;font-size:12px;color:var(--gold-deep);}
+  .sidebar{position:fixed;left:0;top:0;z-index:50;transform:translateX(-100%);transition:transform .28s ease;box-shadow:2px 0 24px rgba(13,13,11,.18);}
+  .sidebar.open{transform:translateX(0);}
+  .content{padding:20px 16px 60px;}
+  .fieldgrid{grid-template-columns:1fr;}
+  .statcards{grid-template-columns:1fr 1fr;}
+  .mrow{grid-template-columns:1.2fr 1fr 1fr;gap:6px;}
+  .mrow .mnet,.mrow .del{display:none;}
+  .mrow.head span:nth-child(4),.mrow.head span:nth-child(5){display:none;}
+  .row.crm{flex-wrap:wrap;}
+  .row.crm .type,.crmstatus{width:calc(50% - 4px);}
+  .row.crm .next{flex-basis:100%;}
+}
+@media (prefers-reduced-motion:reduce){
+  .section{animation:none;} .progfill{transition:none;} .com-root .spinner{animation:none;}
+}
+`}</style>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+
+</script>
+<script>
+(function () {
+  try {
+    if (typeof Babel === 'undefined') throw new Error('Babel non chargé (vérifie ta connexion).');
+    var src = document.getElementById('app-src').textContent;
+    var out = Babel.transform(src, { presets: [['react', { runtime: 'classic' }]] }).code;
+    new Function(out)();
+  } catch (err) {
+    var r = document.getElementById('root');
+    if (r) r.innerHTML = '<pre class="apperr">' + (err && err.stack ? err.stack : err) + '</pre>';
+  }
+})();
+</script>
+</body>
+</html>
