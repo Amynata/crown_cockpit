@@ -330,7 +330,7 @@ const SECTIONS = {
   roadmap: { label: "Roadmap", q: "Les phases du produit et leurs features. Clique une feature pour déplier sa description.", type: "roadmap" },
   risques: { label: "Risques & défis", q: "Ce qui pourrait faire capoter le projet — et comment tu l’anticipes.", type: "text" },
   traction: { label: "Traction", q: "Les preuves que ça marche : demandes coiffeur·se·s, POC, signaux B2B.", type: "text" },
-  hypotheses: { label: "Problèmes & hypothèses", q: "Les paris non prouvés sur lesquels tout repose. Un énoncé, un statut, une méthode pour le vérifier.", type: "hypotheses" },
+  hypotheses: { label: "Hypothèses", q: "Les paris non prouvés sur lesquels tout repose. Un énoncé, un statut, une méthode pour le vérifier.", type: "hypotheses" },
   finances: { label: "Finances", q: "Combien ça coûte, combien ça rapporte, et quand tu atteins l’équilibre.", type: "finances" },
   tarification: { label: "Tarification", q: "Tes paliers de prix, par cible. Clique « Éditer » pour les ajuster.", type: "pricing" },
   tech: { label: "Dév technique", q: "Piloter le build : stack, intégrations, décisions techniques et chantiers.", type: "tech" },
@@ -749,27 +749,6 @@ function DEFAULT_DISCOVERY() {
   };
 }
 
-/* ---- Ressources : étagère de liens réutilisable ---- */
-const RES_CATS = ["Sondages", "Outils", "Concurrents", "Programme", "Docs"];
-function DEFAULT_RESOURCES() {
-  const R = (label, cat) => ({ id: rid("rs"), label, url: "", cat, note: "" });
-  return [
-    R("Sondage coiffeuses", "Sondages"),
-    R("Sondage utilisatrices", "Sondages"),
-    R("Fal.ai", "Outils"),
-    R("n8n", "Outils"),
-    R("Airtable", "Outils"),
-    R("Notion", "Outils"),
-    R("FlutterFlow", "Outils"),
-    R("Firebase", "Outils"),
-    R("Apify", "Outils"),
-    R("Zenaba", "Concurrents"),
-    R("Planity", "Concurrents"),
-    R("L'Oréal — Style My Hair", "Concurrents"),
-    R("La Ligue — Startup Banlieue", "Programme"),
-  ];
-}
-
 function buildDefault() {
   const fields = {};
   ALL_KEYS.forEach((k) => {
@@ -801,61 +780,9 @@ function buildDefault() {
     tech: DEFAULT_TECH(),
     seeds: {},
     journal: [],
-    meetings: [
-      {
-        id: 1784070198231,
-        ts: 1784070198231,
-        date: "11 juil. 2026",
-        title: "Ateliers Utilisateurs",
-        themes: ["Recherche Utilisateurs", "Personas", "Segment"],
-        notes: `## Source : The Mom Test
-Dans un première partie, il faut cadrer les hypothèses et la problématique
-Savoir poser des Hypothèses et les tester.
-
-## Exercices : formuler les hypothèses sur Crown On me
-1- Les personnes aux cheveux texturés peuvent dépenser jusqu'à plus de 150 euros par mois en moyenne chez le coiffeurs
-2- Avant de réaliser une coiffure les coiffeuses et les coiffés passer jusqu'à 2 jours d'échange avant de pouvoir se mettre d'accord sur la coiffure
-3 - Les coiffés passent jusqu'à 1 semaine sur les réseaux sociaux avant de pouvoir identifier le modèles qu'elle souhaite obtenir ?
-4- Les coiffées ont du mal à trouver une coiffeuse une fiable, ça peut leur prendre jusqu'a X plusieurs mois, avant de trouver une bonne coiffeuse.
-5 - X pourcent des personnes aux cheveux texturé ont du mal à laisser leur cheveux aux naturels parce qu'elles ne savent pas les entretenir, ou qu'elles ne savent les produits pertinent pour leurs cheveux.
-6 - X pourcent de parents qui ont des enfants aux cheveux texturés ont du mal à entretenir les cheveux de leur enfants ou identifier les besoins en en cheveux de leur enfants
-7 - X pourcent de parents/coiffés ont du mal à trouver des salons de coiffures adapté aux besoins en cheveux de leurs enfants.
-8- Les coiffées peuvent passer jusqu'à 2h pour se déplacer d'un point A vers un point B
-9 - X pourcent de personnes coiffées ne sont pas garanties du résultats, ce qui peut être sources de stress et anxiogène.
-10 - Les hommes dépense X euros pour leur coupe de cheveux par mois
-
-## Réaliser un brief de recherche
-**Les retours utilisateurs vont me permettre :**
-- De valider ou invalider les hypothèses qui sont basés sur de l'observation donc éviter le biais du survivant / biais de l'échantillon
-- de quantifier et d'apporter des chiffres precise sur les comportement de mon marché et par extension de mes utilisateurs
-- J'imagine un batch de au moins 10 personnes cotés coiffé et 5 personnes côté coiffeuses
-
-**Cible :**
-- Les personnes a consulter sont les coiffeuses détentrice de salon de coiffure ou non
-- Les coiffées qui finalement, représente ma famille et les amis au cheveux texturés.
-
-**Temps :** 1 mois maximum
-
-**Je vais utiliser les deux méthodes :**
-- Quantitative : A travers 1 questionnaire qui sera envoyé à plusieurs personnes incluant les coiffées et quelques coiffeuses.
-- Typeform ( questionnaire )
-- Eventuellement post sur reddit pour toucher plus d'utilisateurs
-- Qualitative : Priviligiés les interview utilisateurs pour les coiffeuses pour aussi étendre et identifier s'il n'y a pas d'autres problméatiques
-
-## Interview utilisateurs
-Segment : Coiffeuse
-
-Combien de temps tu passes en moyenne à comprendre ce que ta clients veut ?
-- 1h
-- Instantanée
-- 30 à 45 min
-
-Sur une echelle de 1 à 5 ( Peu douloureux et 5 trés douloureux) A quel point tu trouves la phase pour découvrir le modèle d'une coiffeuse contraignant ?`,
-      },
-    ],
+    meetings: [],
     interviews: [],
     todos: [],
-    resources: DEFAULT_RESOURCES(),
   };
 }
 
@@ -963,7 +890,6 @@ function App() {
             if (!Array.isArray(merged.meetings)) merged.meetings = [];
             if (!Array.isArray(merged.interviews)) merged.interviews = [];
             if (!Array.isArray(merged.todos)) merged.todos = [];
-            if (!Array.isArray(merged.resources)) merged.resources = DEFAULT_RESOURCES();
             if (!merged.touched || typeof merged.touched !== "object") merged.touched = {};
             prefillEmptyFields(merged);
             applyOneTimeSeeds(merged);
@@ -1032,7 +958,6 @@ function App() {
   const setTsom = (ts) => setState((p) => ({ ...p, tsom: ts, touched: { ...p.touched, marche: true } }));
   const setMeetings = (rows) => setState((p) => ({ ...p, meetings: rows }));
   const setInterviews = (rows) => setState((p) => ({ ...p, interviews: rows }));
-  const setResources = (rows) => setState((p) => ({ ...p, resources: rows }));
   const setTodos = (rows) => setState((p) => ({ ...p, todos: rows }));
 
   const go = (k) => {
@@ -1137,10 +1062,6 @@ function App() {
                 <span className="navdot star">✦</span>
                 <span className="navlabel">Interviews</span>
               </button>
-              <button className={"navitem journal" + (active === "resources" ? " on" : "")} onClick={() => go("resources")}>
-                <span className="navdot star">✦</span>
-                <span className="navlabel">Ressources</span>
-              </button>
             </div>
           </nav>
 
@@ -1171,8 +1092,6 @@ function App() {
             <MeetingsView state={state} setMeetings={setMeetings} />
           ) : active === "interviews" ? (
             <InterviewsView state={state} setInterviews={setInterviews} />
-          ) : active === "resources" ? (
-            <ResourcesView state={state} setResources={setResources} />
           ) : (
             <SectionView
               k={active}
@@ -1473,8 +1392,7 @@ function SectionView({ k, state, setField, setStatus, setCap, setCrm, setFinance
       </div>
 
       {s.type === "grid" && <FieldGrid k={k} s={s} vals={state.fields[k]} setField={setField} />}
-      {s.type === "fields" && k === "pitch" && <PitchModule s={s} vals={state.fields[k]} setField={setField} />}
-      {s.type === "fields" && k !== "pitch" && <FieldStack k={k} s={s} vals={state.fields[k]} setField={setField} />}
+      {s.type === "fields" && <FieldStack k={k} s={s} vals={state.fields[k]} setField={setField} />}
       {k === "marche" && <TsomModule data={state.tsom || {}} setData={setTsom} />}
       {s.type === "text" && (
         <NotesEditor
@@ -1548,49 +1466,6 @@ function FieldStack({ k, s, vals, setField }) {
           <NotesEditor rows={3} placeholder={hint} value={vals[fk]} onChange={(v) => setField(k, fk, v)} />
         </div>
       ))}
-    </div>
-  );
-}
-
-/* ---------------- Pitch : édition + aperçu éditorial ---------------- */
-function PitchModule({ s, vals, setField }) {
-  const filled = s.fields.filter(([fk]) => vals[fk] && vals[fk].trim());
-  const empty = s.fields.filter(([fk]) => !(vals[fk] && vals[fk].trim()));
-  const [edit, setEdit] = useState(filled.length === 0);
-
-  return (
-    <div className="pitchmod">
-      <div className="segperbar">
-        <button className={"rmedit" + (edit ? " on" : "")} onClick={() => setEdit((e) => !e)}>{edit ? "Aperçu" : "Éditer"}</button>
-      </div>
-
-      {edit ? (
-        <div className="fieldstack">
-          {s.fields.map(([fk, label, hint]) => (
-            <div className="field" key={fk}>
-              <label>{label}</label>
-              <NotesEditor rows={3} placeholder={hint} value={vals[fk]} onChange={(v) => setField("pitch", fk, v)} />
-            </div>
-          ))}
-        </div>
-      ) : filled.length === 0 ? (
-        <p className="empty">Rien à afficher. Clique « Éditer » pour rédiger ton pitch.</p>
-      ) : (
-        <div className="pitchpreview">
-          {filled.map(([fk, label], i) => (
-            <div className="pitchpart" key={fk}>
-              <span className="pitchnum">{String(i + 1).padStart(2, "0")}</span>
-              <div className="pitchbody">
-                <span className="pitcheyebrow">{label}</span>
-                <p className="pitchtext">{vals[fk].trim()}</p>
-              </div>
-            </div>
-          ))}
-          {empty.length > 0 && (
-            <p className="pitchtodo">À compléter : {empty.map(([, label]) => label).join(" · ")}</p>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -3045,77 +2920,6 @@ const INTERVIEW_STATUS = [
   { code: "done", label: "Faite" },
 ];
 
-/* ---------------- Ressources ---------------- */
-function ResourcesView({ state, setResources }) {
-  const items = state.resources || [];
-  const [edit, setEdit] = useState(false);
-  const add = () => setResources([...items, { id: rid("rs"), label: "", url: "", cat: RES_CATS[0], note: "" }]);
-  const upd = (id, p) => setResources(items.map((r) => (r.id === id ? { ...r, ...p } : r)));
-  const del = (id) => setResources(items.filter((r) => r.id !== id));
-
-  const extra = [...new Set(items.map((r) => r.cat))].filter((c) => c && !RES_CATS.includes(c));
-  const cats = [...RES_CATS.filter((c) => items.some((r) => r.cat === c)), ...extra];
-  const catOptions = [...new Set([...RES_CATS, ...items.map((r) => r.cat)])].filter(Boolean);
-
-  return (
-    <div className="section resview">
-      <div className="sechead">
-        <div><h2>Ressources</h2></div>
-        <button className={"rmedit" + (edit ? " on" : "")} onClick={() => setEdit((e) => !e)}>{edit ? "Aperçu" : "Éditer"}</button>
-      </div>
-      <div className="guide">
-        <span className="guideicon">?</span>
-        <p>Ton étagère : outils, concurrents, sondages, docs, liens du programme. Un label, un lien, une catégorie.</p>
-      </div>
-
-      {edit ? (
-        <div className="resedit">
-          {items.map((r) => (
-            <div className="resrow" key={r.id}>
-              <input className="grow" placeholder="Nom (ex. Sondage coiffeuses)" value={r.label} onChange={(e) => upd(r.id, { label: e.target.value })} />
-              <input className="grow2" placeholder="https://…" value={r.url} onChange={(e) => upd(r.id, { url: e.target.value })} />
-              <select className="rescat" value={r.cat} onChange={(e) => upd(r.id, { cat: e.target.value })}>
-                {catOptions.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-              <input className="resnoteinput" placeholder="Note (optionnel)" value={r.note} onChange={(e) => upd(r.id, { note: e.target.value })} />
-              <button className="del" onClick={() => del(r.id)} aria-label="Retirer">×</button>
-            </div>
-          ))}
-          <button className="addrow" onClick={add}>+ Ressource</button>
-        </div>
-      ) : items.length === 0 ? (
-        <p className="empty">Aucune ressource. Clique « Éditer » pour en ajouter.</p>
-      ) : (
-        <div className="resgroups">
-          {cats.map((c) => (
-            <div className="resgroup" key={c}>
-              <h3 className="rescatttl">{c}</h3>
-              <div className="reslist">
-                {items.filter((r) => r.cat === c).map((r) =>
-                  r.url && r.url.trim() ? (
-                    <a className="rescard link" href={r.url} target="_blank" rel="noopener noreferrer" key={r.id}>
-                      <span className="reslabel">{r.label || "Sans nom"}</span>
-                      {r.note && <span className="resnote">{r.note}</span>}
-                      <span className="resarrow">→</span>
-                    </a>
-                  ) : (
-                    <div className="rescard nolink" key={r.id}>
-                      <span className="reslabel">{r.label || "Sans nom"}</span>
-                      {r.note && <span className="resnote">{r.note}</span>}
-                      <span className="resmissing">lien à ajouter</span>
-                    </div>
-                  )
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ---------------- Interviews ---------------- */
 function InterviewsView({ state, setInterviews }) {
   const interviews = state.interviews || [];
   const segNames = ((state.segper && state.segper.segments) || []).map((s) => s.name).filter(Boolean);
@@ -3624,17 +3428,6 @@ function buildMarkdown(state, pct) {
     });
     md += `\n`;
   }
-  if (state.resources && state.resources.length) {
-    md += `## Ressources\n\n`;
-    const cats = [...new Set(state.resources.map((r) => r.cat))].filter(Boolean);
-    cats.forEach((c) => {
-      md += `### ${c}\n`;
-      state.resources.filter((r) => r.cat === c).forEach((r) => {
-        md += `- ${r.label || "(sans nom)"}${r.url ? " — " + r.url : " — (lien à ajouter)"}${r.note ? " · " + r.note : ""}\n`;
-      });
-      md += `\n`;
-    });
-  }
   return md;
 }
 
@@ -4097,36 +3890,6 @@ input.fname{flex:1;font-weight:500;}
 .linkopt.on{background:var(--band-faint);}
 .critcheck{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink-soft);margin:6px 0;cursor:pointer;}
 @media (max-width:560px){ .discohint{max-width:100%;text-align:left;} }
-/* Pitch — aperçu éditorial */
-.pitchmod{display:flex;flex-direction:column;gap:4px;}
-.pitchpreview{display:flex;flex-direction:column;}
-.pitchpart{display:flex;gap:16px;align-items:flex-start;padding:16px 2px;border-bottom:1px solid var(--line);}
-.pitchpart:last-of-type{border-bottom:none;}
-.pitchnum{font-family:'Cormorant Garamond',serif;font-size:26px;font-weight:600;color:var(--gold);line-height:1;flex:none;width:34px;text-align:right;}
-.pitchbody{flex:1;}
-.pitcheyebrow{display:block;font-family:'DM Sans',sans-serif;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold-deep);margin-bottom:6px;}
-.pitchtext{font-size:15px;line-height:1.65;color:var(--ink);margin:0;white-space:pre-wrap;}
-.pitchtodo{margin-top:14px;padding-top:12px;border-top:1px dashed var(--line);font-size:12px;color:var(--stone);font-style:italic;}
-/* Ressources */
-.resview .rmedit{float:right;}
-.resgroups{display:flex;flex-direction:column;gap:18px;}
-.resgroup{}
-.rescatttl{font-family:'DM Sans',sans-serif;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold-deep);margin:0 0 8px;}
-.reslist{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;}
-.rescard{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;text-decoration:none;color:var(--ink);transition:border-color .15s,background .15s;}
-.rescard.link:hover{border-color:var(--gold);background:var(--band-faint);}
-.reslabel{font-family:'Cormorant Garamond',serif;font-size:17px;color:var(--ink);flex:1;line-height:1.2;}
-.resnote{font-size:11px;color:var(--ink-soft);}
-.resarrow{font-family:'DM Sans',sans-serif;color:var(--gold-deep);font-size:15px;flex:none;}
-.rescard.nolink{opacity:.72;}
-.resmissing{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--stone);font-style:italic;flex:none;}
-.resedit{display:flex;flex-direction:column;gap:8px;}
-.resrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
-.resrow .grow{flex:1;min-width:150px;}
-.resrow .grow2{flex:2;min-width:180px;}
-.rescat{width:130px;flex:none;cursor:pointer;}
-.resnoteinput{flex:1;min-width:140px;}
-@media (max-width:560px){ .resrow .grow,.resrow .grow2,.resrow .rescat,.resrow .resnoteinput{flex-basis:100%;width:100%;} }
 /* TAM / SAM / SOM */
 .tsom{display:flex;flex-direction:column;gap:12px;margin-bottom:20px;padding-bottom:18px;border-bottom:1px solid var(--line);}
 .tsombar{display:flex;justify-content:space-between;align-items:baseline;gap:10px;}
