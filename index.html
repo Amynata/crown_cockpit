@@ -1468,6 +1468,50 @@ function Overview({ state, pct, go, setStatus, addJournal, setTodos }) {
 }
 
 /* ---------------- Section router ---------------- */
+function SectionExport({ k, state }) {
+  const blocks = SECTION_BLOCKS[k] || null;
+  const [open, setOpen] = useState(false);
+  const [sel, setSel] = useState(blocks ? blocks.map(([b]) => b) : []);
+  const [done, setDone] = useState(false);
+
+  const copy = async (list) => {
+    const body = sectionMd(state, k, list || null).trim();
+    const md = `# ${SECTIONS[k].label}\n\n` + (body ? body + "\n" : "_(vide)_\n");
+    try {
+      await navigator.clipboard.writeText(md);
+      setDone(true);
+      setTimeout(() => { setDone(false); setOpen(false); }, 1400);
+    } catch (e) {}
+  };
+
+  if (!blocks) {
+    return <button className="secexport" onClick={() => copy(null)}>{done ? "Copié ✓" : "Exporter"}</button>;
+  }
+
+  const toggle = (b) => setSel(sel.indexOf(b) >= 0 ? sel.filter((x) => x !== b) : [...sel, b]);
+
+  return (
+    <div className="secexportwrap">
+      <button className={"secexport" + (open ? " on" : "")} onClick={() => setOpen((o) => !o)}>{done ? "Copié ✓" : "Exporter"}</button>
+      {open && (
+        <div className="secexportpop">
+          <span className="sxlbl">Quels blocs ?</span>
+          {blocks.map(([b, label]) => (
+            <label className="sxopt" key={b}>
+              <input type="checkbox" checked={sel.indexOf(b) >= 0} onChange={() => toggle(b)} />
+              {label}
+            </label>
+          ))}
+          <div className="sxactions">
+            <button className="sxmini" onClick={() => setSel(blocks.map(([b]) => b))}>Tout</button>
+            <button className="sxcopy" onClick={() => copy(sel)} disabled={!sel.length}>Copier</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SectionView({ k, state, setField, setStatus, setCap, setCrm, setFinance, setRoadmap, setCompetitors, setHypotheses, setDiscovery, setBmc, setPricing, setProduit, setTech, setSegper, setTsom, addJournal, delJournal }) {
   const s = SECTIONS[k];
   const started = isStarted(state, k);
@@ -1479,7 +1523,10 @@ function SectionView({ k, state, setField, setStatus, setCap, setCrm, setFinance
         <div>
           <h2>{s.label}</h2>
         </div>
-        <span className={"secstate " + (started ? "on" : "")}>{started ? "Entamée" : "À remplir"}</span>
+        <div className="secheadright">
+          <SectionExport k={k} state={state} />
+          <span className={"secstate " + (started ? "on" : "")}>{started ? "Entamée" : "À remplir"}</span>
+        </div>
       </div>
 
       <div className="guide">
@@ -3582,18 +3629,28 @@ function formatDateShort(ts) {
   }
 }
 
-function buildMarkdown(state, pct) {
-  let md = `# Crown On Me — Cockpit\n\n_Avancement : ${pct}%_\n\n`;
-  ALL_KEYS.forEach((k) => {
+/* Blocs exportables par section (pour l'export ciblé) */
+const SECTION_BLOCKS = {
+  marche: [["texte", "Texte"], ["tsom", "TAM / SAM / SOM"]],
+  segments: [["segments", "Segments"], ["personas", "Personas"]],
+  hypotheses: [["problemes", "Problématiques"], ["hypotheses", "Hypothèses"], ["opportunites", "Opportunités"]],
+  tech: [["stack", "Architecture & stack"], ["services", "Intégrations & services"], ["decisions", "Décisions techniques"], ["chantiers", "Chantiers"]],
+};
+
+function sectionMd(state, k, blocks) {
+  const on = (b) => !blocks || blocks.indexOf(b) >= 0;
+  let md = "";
+  {
     const s = SECTIONS[k];
-    md += `## ${s.label} — ${isStarted(state, k) ? "Entamée" : "À remplir"}\n\n`;
     const v = state.fields[k];
-    if (s.type === "text" || s.type === "finances") {
-      if (v.body && v.body.trim()) md += `${v.body.trim()}\n\n`;
-    } else if (s.fields) {
-      s.fields.forEach(([fk, label]) => {
-        if (v[fk] && v[fk].trim()) md += `**${label}**\n${v[fk].trim()}\n\n`;
-      });
+    if (on("texte")) {
+      if (s.type === "text" || s.type === "finances") {
+        if (v.body && v.body.trim()) md += `${v.body.trim()}\n\n`;
+      } else if (s.fields) {
+        s.fields.forEach(([fk, label]) => {
+          if (v[fk] && v[fk].trim()) md += `**${label}**\n${v[fk].trim()}\n\n`;
+        });
+      }
     }
     if (k === "finances") {
       const cap = num(state.finance.capital);
@@ -3660,7 +3717,7 @@ function buildMarkdown(state, pct) {
         md += `\n`;
       });
     }
-    if (k === "marche" && state.tsom) {
+    if (k === "marche" && state.tsom && on("tsom")) {
       const ts = state.tsom;
       const L = { tam: "TAM", sam: "SAM", som: "SOM" };
       const anyLvl = ["tam", "sam", "som"].some((x) => ts[x] && (ts[x].label || ts[x].amount || ts[x].method || ts[x].source));
@@ -3679,9 +3736,9 @@ function buildMarkdown(state, pct) {
     }
     if (k === "segments" && state.segper) {
       const sp = state.segper;
-      const sg = (sp.segments || []).filter((s) => s.name);
+      const sg = on("segments") ? (sp.segments || []).filter((s) => s.name) : [];
       if (sg.length) { md += `**Segments**\n`; sg.forEach((s) => (md += `- ${s.name} (${s.type})${s.desc ? " — " + s.desc : ""}\n`)); md += `\n`; }
-      const pe = (sp.personas || []).filter((p) => p.name);
+      const pe = on("personas") ? (sp.personas || []).filter((p) => p.name) : [];
       if (pe.length) {
         md += `**Personas**\n`;
         pe.forEach((p) => {
@@ -3696,15 +3753,15 @@ function buildMarkdown(state, pct) {
     }
     if (k === "tech" && state.tech) {
       const tc = state.tech;
-      if (tc.stack && tc.stack.trim()) md += `**Architecture & stack**\n${tc.stack.trim()}\n\n`;
-      const sv = (tc.services || []).filter((s) => s.name);
+      if (on("stack") && tc.stack && tc.stack.trim()) md += `**Architecture & stack**\n${tc.stack.trim()}\n\n`;
+      const sv = on("services") ? (tc.services || []).filter((s) => s.name) : [];
       if (sv.length) { md += `**Intégrations & services**\n`; sv.forEach((s) => (md += `- ${s.name}${s.role ? " (" + s.role + ")" : ""} · ${s.status}\n`)); md += `\n`; }
-      const dc = (tc.decisions || []).filter((d) => d.decision);
+      const dc = on("decisions") ? (tc.decisions || []).filter((d) => d.decision) : [];
       if (dc.length) { md += `**Décisions techniques**\n`; dc.forEach((d) => (md += `- ${d.decision}${d.why ? " — " + d.why : ""}${d.date ? " (" + d.date + ")" : ""}\n`)); md += `\n`; }
-      const ch = (tc.chantiers || []).filter((c) => c.label);
+      const ch = on("chantiers") ? (tc.chantiers || []).filter((c) => c.label) : [];
       if (ch.length) { md += `**Chantiers & dette technique**\n`; ch.forEach((c) => (md += `- [${c.status}] ${c.label}\n`)); md += `\n`; }
     }
-    if (k === "hypotheses" && Array.isArray(state.hypotheses)) {
+    if (k === "hypotheses" && Array.isArray(state.hypotheses) && on("hypotheses")) {
       const labelOf = (pid) => ((state.discovery && state.discovery.problems || []).find((p) => p.id === pid) || {}).intitule || "";
       state.hypotheses.forEach((h) => {
         const t = HYP_TYPE[h.type] ? HYP_TYPE[h.type].name : "";
@@ -3723,7 +3780,7 @@ function buildMarkdown(state, pct) {
     if (k === "hypotheses" && state.discovery) {
       const dv = state.discovery;
       const labelOf = (pid) => ((dv.problems || []).find((p) => p.id === pid) || {}).intitule || "";
-      const pr = dv.problems || [];
+      const pr = on("problemes") ? (dv.problems || []) : [];
       if (pr.length) {
         md += `**Problématiques**\n`;
         pr.forEach((p) => {
@@ -3733,7 +3790,7 @@ function buildMarkdown(state, pct) {
         });
         md += `\n`;
       }
-      const op = dv.opps || [];
+      const op = on("opportunites") ? (dv.opps || []) : [];
       if (op.length) {
         md += `**Opportunités**\n`;
         op.forEach((o) => {
@@ -3745,6 +3802,15 @@ function buildMarkdown(state, pct) {
         md += `\n`;
       }
     }
+  }
+  return md;
+}
+
+function buildMarkdown(state, pct) {
+  let md = `# Crown On Me — Cockpit\n\n_Avancement : ${pct}%_\n\n`;
+  ALL_KEYS.forEach((k) => {
+    md += `## ${SECTIONS[k].label} — ${isStarted(state, k) ? "Entamée" : "À remplir"}\n\n`;
+    md += sectionMd(state, k);
   });
   if (state.journal.length) {
     md += `## Journal\n\n`;
@@ -3943,6 +4009,22 @@ textarea:focus,input:focus,select:focus{outline:none;border-color:var(--plum);bo
 .kindtoggle{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;flex:none;}
 .kindtoggle button{border:none;background:transparent;padding:7px 14px;font-size:13px;color:var(--ink-soft);cursor:pointer;transition:.15s;}
 .kindtoggle button.on{background:var(--plum);color:#fff;}
+/* Export par section */
+.secheadright{display:flex;align-items:center;gap:10px;flex:none;}
+.secexportwrap{position:relative;}
+.secexport{background:none;border:1px solid var(--band-line);color:var(--gold-deep);font-family:'DM Sans',sans-serif;font-size:10.5px;letter-spacing:.08em;border-radius:999px;padding:4px 11px;cursor:pointer;white-space:nowrap;transition:.15s;}
+.secexport:hover,.secexport.on{background:var(--band-faint);border-color:var(--gold);}
+.secexportpop{position:absolute;right:0;top:calc(100% + 6px);z-index:60;background:var(--card);border:1px solid var(--ink);border-radius:12px;padding:12px;min-width:210px;box-shadow:0 12px 32px rgba(0,0,0,.18);display:flex;flex-direction:column;gap:6px;}
+.sxlbl{font-family:'DM Sans',sans-serif;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--stone);margin-bottom:2px;}
+.sxopt{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--ink);cursor:pointer;padding:3px 2px;}
+.sxactions{display:flex;gap:6px;align-items:center;margin-top:6px;padding-top:8px;border-top:1px solid var(--line);}
+.sxmini{background:none;border:1px solid var(--line);border-radius:999px;padding:4px 10px;font-size:11px;color:var(--ink-soft);cursor:pointer;}
+.sxcopy{flex:1;background:var(--ink);color:#fff;border:none;border-radius:999px;padding:5px 12px;font-size:12px;cursor:pointer;}
+.sxcopy:disabled{opacity:.4;cursor:default;}
+@media (max-width:560px){
+  .secheadright{gap:7px;}
+  .secexportpop{right:auto;left:0;min-width:180px;}
+}
 /* Jalons — date cible & jalons à venir */
 .jalondate{flex:none;width:auto;font-size:12px;padding:5px 8px;color:var(--ink-soft);cursor:pointer;}
 .jalonat{font-family:'DM Sans',sans-serif;font-size:10.5px;letter-spacing:.04em;color:var(--stone);font-style:italic;}
