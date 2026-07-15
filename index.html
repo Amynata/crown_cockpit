@@ -320,7 +320,7 @@ const SECTIONS = {
     ],
   },
   concept: { label: "Concept", q: "Mission, vision, et l’idée en une phrase. Pourquoi Crown On Me existe ?", type: "text" },
-  opportunite: { label: "Opportunité", q: "Pourquoi maintenant ? Ce qui rend ce moment unique pour les cheveux texturés.", type: "text" },
+  opportunite: { label: "Opportunité de marché", q: "Pourquoi maintenant ? Ce qui rend ce moment unique pour les cheveux texturés.", type: "text" },
   marche: { label: "Marché", q: "Qui sont tes clients cibles, et quelle est la taille du marché ?", type: "text" },
   segments: { label: "Segments & personas", q: "À qui tu t'adresses : tes segments d'utilisateurs et leurs personas.", type: "segper" },
   produit: { label: "Produit", q: "Le produit en cartes lisibles : briques, parcours, stack. Le détail des features est dans Roadmap.", type: "produit" },
@@ -358,15 +358,15 @@ const SECTIONS = {
 
 const GROUPS = [
   { title: "Cadrage", keys: ["canvas", "pitch"] },
-  { title: "Plan", keys: ["concept", "opportunite", "marche", "segments", "produit", "strategie", "concurrents", "marketing", "roadmap", "risques", "traction"] },
+  { title: "Plan", keys: ["concept", "opportunite", "marche", "segments", "produit", "strategie", "concurrents", "marketing", "roadmap", "risques"] },
   { title: "Discovery", keys: ["hypotheses"] },
   { title: "Build", keys: ["tech"] },
-  { title: "Chiffres", keys: ["finances", "tarification"] },
-  { title: "Équipe", keys: ["equipe"] },
-  { title: "Levée", keys: ["levee"] },
+  { title: "Chiffres", keys: ["tarification"] },
+  { title: "Plus tard", keys: ["traction", "finances", "equipe", "levee"], later: true },
 ];
 
 const ALL_KEYS = GROUPS.flatMap((g) => g.keys);
+const COUNTED_KEYS = GROUPS.filter((g) => !g.later).flatMap((g) => g.keys);
 
 const STATUS = { todo: "À faire", doing: "En cours", done: "Validé" };
 const STATUS_WEIGHT = { todo: 0, doing: 0.5, done: 1 };
@@ -1009,7 +1009,7 @@ function App() {
   }
 
   const pct = Math.round(
-    (ALL_KEYS.filter((k) => isStarted(state, k)).length / ALL_KEYS.length) * 100
+    (COUNTED_KEYS.filter((k) => isStarted(state, k)).length / COUNTED_KEYS.length) * 100
   );
 
   const setField = (sec, fk, val) =>
@@ -1113,8 +1113,8 @@ function App() {
               <span className="navlabel">Vue d’ensemble</span>
             </button>
             {GROUPS.map((g) => (
-              <div className="navgroup" key={g.title}>
-                <p className="navgrouptitle">{g.title}</p>
+              <div className={"navgroup" + (g.later ? " navlater" : "")} key={g.title}>
+                <p className="navgrouptitle">{g.title}{g.later && <span className="navlaterhint">hors avancement</span>}</p>
                 {g.keys.map((k) => (
                   <button key={k} className={"navitem " + (isStarted(state, k) ? "st-started" : "st-empty") + (active === k ? " on" : "")} onClick={() => go(k)}>
                     <span className="navdot" />
@@ -1328,6 +1328,7 @@ function ShareModal({ onClose }) {
 function Overview({ state, pct, go, setStatus, addJournal, setTodos }) {
   const [cap, setCap] = useState("");
   const [capKind, setCapKind] = useState("note");
+  const [capAt, setCapAt] = useState("");
   const [todoInput, setTodoInput] = useState("");
   const todos = state.todos || [];
   const addTodo = () => {
@@ -1339,13 +1340,15 @@ function Overview({ state, pct, go, setStatus, addJournal, setTodos }) {
   const delTodo = (id) => setTodos(todos.filter((t) => t.id !== id));
   const submitCap = () => {
     if (!cap.trim()) return;
-    addJournal({ section: "general", kind: capKind, text: cap.trim() });
+    const at = capKind === "jalon" ? dateInputToTs(capAt) : null;
+    addJournal({ section: "general", kind: capKind, text: cap.trim(), ...(at ? { at } : {}) });
     setCap("");
+    setCapAt("");
   };
 
-  const startedCount = ALL_KEYS.filter((k) => isStarted(state, k)).length;
-  const emptyCount = ALL_KEYS.length - startedCount;
-  const firstEmpty = ALL_KEYS.find((k) => !isStarted(state, k)) || null;
+  const startedCount = COUNTED_KEYS.filter((k) => isStarted(state, k)).length;
+  const emptyCount = COUNTED_KEYS.length - startedCount;
+  const firstEmpty = COUNTED_KEYS.find((k) => !isStarted(state, k)) || null;
   const chantiers = ((state.tech && state.tech.chantiers) || []).filter((c) => c.label && c.status !== "Fait");
   const hypActions = (state.hypotheses || []).filter((h) => (h.status === "atester" || h.status === "encours") && (h.next || h.claim));
   const topAction = chantiers.length
@@ -1353,7 +1356,7 @@ function Overview({ state, pct, go, setStatus, addJournal, setTodos }) {
     : hypActions.length
     ? { text: hypActions[0].next || hypActions[0].claim, nav: "hypotheses" }
     : null;
-  const jalons = (state.journal || []).filter((e) => e.kind === "jalon").slice().sort((a, b) => a.ts - b.ts);
+  const jalons = (state.journal || []).filter((e) => e.kind === "jalon").slice().sort((a, b) => jalonTs(a) - jalonTs(b));
 
   return (
     <div className="section overview">
@@ -1396,6 +1399,15 @@ function Overview({ state, pct, go, setStatus, addJournal, setTodos }) {
             <button className={capKind === "note" ? "on" : ""} onClick={() => setCapKind("note")}>Note</button>
             <button className={capKind === "jalon" ? "on jalon" : "jalon"} onClick={() => setCapKind("jalon")}>Jalon</button>
           </div>
+          {capKind === "jalon" && (
+            <input
+              className="jalondate"
+              type="date"
+              value={capAt}
+              onChange={(e) => setCapAt(e.target.value)}
+              title="Date du jalon — laisse vide pour aujourd'hui, ou vise une date à venir"
+            />
+          )}
           <button className="todayadd" onClick={submitCap} disabled={!cap.trim()}>Ajouter</button>
         </div>
       </div>
@@ -1432,19 +1444,22 @@ function Overview({ state, pct, go, setStatus, addJournal, setTodos }) {
 
       {/* 4 · Jalons */}
       <h3 className="ovblocktitle">Jalons</h3>
-      <p className="ovhelp">Tes caps franchis, dans le temps.</p>
+      <p className="ovhelp">Tes caps franchis et ceux que tu vises, dans le temps.</p>
       {jalons.length === 0 ? (
-        <p className="empty">Aucun jalon pour l’instant. Note une entrée « jalon » ci-dessus et elle apparaîtra ici.</p>
+        <p className="empty">Aucun jalon pour l’instant. Note une entrée « jalon » ci-dessus — avec une date à venir si c’est un cap que tu vises.</p>
       ) : (
         <div className={"frise" + (jalons.length > 1 ? " multi" : "")}>
           <div className="frisetrack">
-            {jalons.map((e) => (
-              <div className="fstep" key={e.id} onClick={() => go("journal")} title={e.text}>
-                <span className="fdate">{formatDateShort(e.ts)}</span>
-                <span className="fmid"><span className="fdot" /></span>
-                <span className="ftext">{e.text}</span>
-              </div>
-            ))}
+            {jalons.map((e) => {
+              const fut = isFutureJalon(e);
+              return (
+                <div className={"fstep" + (fut ? " ffuture" : "")} key={e.id} onClick={() => go("journal")} title={e.text}>
+                  <span className="fdate">{formatDateShort(jalonTs(e))}{fut && <span className="fsoon">à venir</span>}</span>
+                  <span className="fmid"><span className="fdot" /></span>
+                  <span className="ftext">{e.text}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -1774,7 +1789,7 @@ function RoadmapModule({ phases, setRoadmap }) {
           {doneF}/{totalF} features · {phases.length} phases
         </span>
         <button className={"rmedit" + (edit ? " on" : "")} onClick={() => setEdit((e) => !e)}>
-          {edit ? "Terminé" : "Éditer"}
+          {edit ? "Aperçu" : "Éditer"}
         </button>
       </div>
 
@@ -1953,7 +1968,7 @@ function CompetitorsModule({ data, setData, notes, setNotes }) {
       <div className="rmbar">
         <span className="rmcount">{cols.length} acteurs · {rows.length} critères</span>
         <button className={"rmedit" + (edit ? " on" : "")} onClick={() => setEdit((e) => !e)}>
-          {edit ? "Terminé" : "Éditer"}
+          {edit ? "Aperçu" : "Éditer"}
         </button>
       </div>
 
@@ -2052,7 +2067,7 @@ function ClusterFilter({ clusters, cf, setCf }) {
       <div className="filterbar">
         <button className={cf === "all" ? "on" : ""} onClick={() => setCf("all")}>Tous</button>
         {clusters.map((c) => (
-          <button key={c.id} className={cf === c.id ? "on" : ""} onClick={() => setCf(c.id)}>{c.label || "(sans nom)"}</button>
+          <button key={c.id} className={cf === c.id ? "on" : ""} title={c.label || "(sans nom)"} onClick={() => setCf(c.id)}>{c.label || "(sans nom)"}</button>
         ))}
         <button className={cf === "none" ? "on" : ""} onClick={() => setCf("none")}>Non rattaché</button>
       </div>
@@ -2374,46 +2389,82 @@ function HypothesesModule({ items, setItems, problems = [], clusterFilter = "all
     );
   };
 
+  const [amapBig, setAmapBig] = useState(false);
+  useEffect(() => {
+    if (!amapBig) return;
+    const onKey = (e) => { if (e.key === "Escape") setAmapBig(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [amapBig]);
+
+  const AMAP_QUADRANTS = [
+    { imp: "high", cert: "low", label: "À tester en priorité", sub: "risque élevé", prio: true },
+    { imp: "high", cert: "high", label: "Solides", sub: "pas prioritaires" },
+    { imp: "low", cert: "low", label: "Faible impact", sub: "plus tard" },
+    { imp: "low", cert: "high", label: "Sûres", sub: "peu de risque" },
+  ];
+
+  const renderAmapGrid = (big) => (
+    <div className="amapwrap">
+      <div className="amapy">Importance ↑</div>
+      <div className="amapmain">
+        <div className="amapgrid">
+          {AMAP_QUADRANTS.map((q) => {
+            const inCell = items.filter((h) => (h.importance || "high") === q.imp && (h.certainty || "low") === q.cert);
+            return (
+              <div className={"amapcell" + (q.prio ? " prio" : "")} key={q.imp + q.cert}>
+                <div className="amapqlabel">{q.label} <span>· {q.sub}</span></div>
+                <div className="amapchips">
+                  {inCell.length === 0 ? (
+                    <span className="amapempty">—</span>
+                  ) : (
+                    inCell.map((h) => (
+                      <button
+                        className={"achip" + (h.crit ? " achipcrit" : "")}
+                        key={h.id}
+                        title={h.claim}
+                        onClick={() => { setAmapBig(false); setFilter("all"); patch(h.id, { open: true }); }}
+                      >
+                        {h.crit && <span className="achipstar">★</span>}
+                        {h.claim ? (big ? h.claim : h.claim.length > 34 ? h.claim.slice(0, 34) + "…" : h.claim) : "Sans énoncé"}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="amapx">Certitude →</div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="hyp">
       <div className="amap">
         <div className="amaphead">
           <h3>Carte des assomptions</h3>
           <span className="amaphint">Chaque hypothèse se place selon son importance et ta certitude.</span>
+          <button className="amapzoom" onClick={() => setAmapBig(true)} aria-label="Agrandir la carte">⤢ Agrandir</button>
         </div>
-        <div className="amapwrap">
-          <div className="amapy">Importance ↑</div>
-          <div className="amapmain">
-            <div className="amapgrid">
-              {[
-                { imp: "high", cert: "low", label: "À tester en priorité", sub: "risque élevé", prio: true },
-                { imp: "high", cert: "high", label: "Solides", sub: "pas prioritaires" },
-                { imp: "low", cert: "low", label: "Faible impact", sub: "plus tard" },
-                { imp: "low", cert: "high", label: "Sûres", sub: "peu de risque" },
-              ].map((q) => {
-                const inCell = items.filter((h) => (h.importance || "high") === q.imp && (h.certainty || "low") === q.cert);
-                return (
-                  <div className={"amapcell" + (q.prio ? " prio" : "")} key={q.imp + q.cert}>
-                    <div className="amapqlabel">{q.label} <span>· {q.sub}</span></div>
-                    <div className="amapchips">
-                      {inCell.length === 0 ? (
-                        <span className="amapempty">—</span>
-                      ) : (
-                        inCell.map((h) => (
-                          <button className="achip" key={h.id} title={h.claim} onClick={() => { setFilter("all"); patch(h.id, { open: true }); }}>
-                            {h.claim ? (h.claim.length > 34 ? h.claim.slice(0, 34) + "…" : h.claim) : "Sans énoncé"}
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+        {renderAmapGrid(false)}
+      </div>
+
+      {amapBig && (
+        <div className="amapmodal" onClick={() => setAmapBig(false)}>
+          <div className="amapmodalbox" onClick={(e) => e.stopPropagation()}>
+            <div className="amapmodalhead">
+              <div>
+                <h3>Carte des assomptions</h3>
+                <span className="amaphint">{items.length} hypothèses · clique l'une d'elles pour ouvrir sa fiche</span>
+              </div>
+              <button className="amapclose" onClick={() => setAmapBig(false)} aria-label="Fermer">×</button>
             </div>
-            <div className="amapx">Certitude →</div>
+            <div className="amapmodalbody">{renderAmapGrid(true)}</div>
           </div>
         </div>
-      </div>
+      )}
 
       {critItems.length > 0 && (
         <div className="hcritzone">
@@ -2520,7 +2571,7 @@ function PricingModule({ pricing, setPricing }) {
       <div className="rmbar">
         <span className="rmcount">{tiers.length} paliers</span>
         <button className={"rmedit" + (edit ? " on" : "")} onClick={() => setEdit((e) => !e)}>
-          {edit ? "Terminé" : "Éditer"}
+          {edit ? "Aperçu" : "Éditer"}
         </button>
       </div>
 
@@ -2605,7 +2656,7 @@ function ProduitModule({ data, setData }) {
       <div className="rmbar">
         <span className="rmcount">{briques.length} briques · {parcours.length} étapes</span>
         <button className={"rmedit" + (edit ? " on" : "")} onClick={() => setEdit((e) => !e)}>
-          {edit ? "Terminé" : "Éditer"}
+          {edit ? "Aperçu" : "Éditer"}
         </button>
       </div>
 
@@ -2898,18 +2949,77 @@ function TsomModule({ data, setData }) {
 }
 
 /* ---------------- Dév technique ---------------- */
+const TECH_STATUS_COLOR = {
+  "À intégrer": "#8b7355",
+  "À faire": "#8b7355",
+  "En cours": "#c9854a",
+  "En prod": "#2d7a5f",
+  "Fait": "#2d7a5f",
+};
+
 function TechModule({ data, setData }) {
   const services = data.services || [];
   const decisions = data.decisions || [];
   const chantiers = data.chantiers || [];
   const upd = (patch) => setData({ ...data, ...patch });
 
+  const has = (v) => v && String(v).trim();
+  const svcFilled = services.filter((s) => has(s.name));
+  const decFilled = decisions.filter((d) => has(d.decision));
+  const chaFilled = chantiers.filter((c) => has(c.label));
+  const anything = has(data.stack) || svcFilled.length || decFilled.length || chaFilled.length;
+  const [edit, setEdit] = useState(!anything);
+
   const updSvc = (id, p) => upd({ services: services.map((s) => (s.id === id ? { ...s, ...p } : s)) });
   const updDec = (id, p) => upd({ decisions: decisions.map((d) => (d.id === id ? { ...d, ...p } : d)) });
   const updCha = (id, p) => upd({ chantiers: chantiers.map((c) => (c.id === id ? { ...c, ...p } : c)) });
 
+  const TechBadge = ({ v }) => (
+    <span className="techbadge" style={{ color: TECH_STATUS_COLOR[v] || "var(--stone)", borderColor: (TECH_STATUS_COLOR[v] || "#8b7355") + "66", background: (TECH_STATUS_COLOR[v] || "#8b7355") + "12" }}>{v}</span>
+  );
+  const TechBlock = ({ title, rows }) =>
+    rows.length === 0 ? null : (
+      <div className="resblock">
+        <div className="resband">{title}</div>
+        <div className="resrows">
+          {rows.map((r) => (
+            <div className="resline" key={r.id}>
+              <div className="restxt">
+                <span className="reslabel">{r.main}</span>
+                {r.sub && <span className="resnote">{r.sub}</span>}
+              </div>
+              {r.badge ? <TechBadge v={r.badge} /> : r.right ? <span className="techdateview">{r.right}</span> : null}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+
+  if (!edit) {
+    return (
+      <div className="tech">
+        <div className="techbar">
+          <button className="rmedit" onClick={() => setEdit(true)}>Éditer</button>
+        </div>
+        {has(data.stack) && (
+          <div className="resblock">
+            <div className="resband">Architecture & stack</div>
+            <div className="resrows"><p className="techstackview">{data.stack.trim()}</p></div>
+          </div>
+        )}
+        <TechBlock title="Intégrations & services" rows={svcFilled.map((s) => ({ id: s.id, main: s.name, sub: s.role, badge: s.status }))} />
+        <TechBlock title="Décisions techniques" rows={decFilled.map((d) => ({ id: d.id, main: d.decision, sub: d.why, right: d.date }))} />
+        <TechBlock title="Chantiers" rows={chaFilled.map((c) => ({ id: c.id, main: c.label, badge: c.status }))} />
+        {!anything && <p className="empty">Rien à afficher. Clique « Éditer » pour remplir.</p>}
+      </div>
+    );
+  }
+
   return (
     <div className="tech">
+      <div className="techbar">
+        <button className="rmedit on" onClick={() => setEdit(false)}>Aperçu</button>
+      </div>
       <div className="block">
         <div className="blockhead"><h3>Architecture & stack</h3></div>
         <textarea className="bigtext" rows={4} placeholder="Front : … · IA : … · Back : … · Hébergement : … · Automatisations : …" value={data.stack || ""} onChange={(e) => upd({ stack: e.target.value })} />
@@ -3046,6 +3156,21 @@ const INTERVIEW_STATUS = [
 ];
 
 /* ---------------- Ressources ---------------- */
+function resHref(url) {
+  const u = (url || "").trim();
+  if (!u) return "";
+  return /^https?:\/\//i.test(u) ? u : "https://" + u;
+}
+function resDomain(url) {
+  const u = resHref(url);
+  if (!u) return "";
+  try {
+    return new URL(u).hostname.replace(/^www\./i, "");
+  } catch (e) {
+    return u.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split("/")[0];
+  }
+}
+
 function ResourcesView({ state, setResources }) {
   const items = state.resources || [];
   const [edit, setEdit] = useState(false);
@@ -3088,24 +3213,25 @@ function ResourcesView({ state, setResources }) {
       ) : (
         <div className="resgroups">
           {cats.map((c) => (
-            <div className="resgroup" key={c}>
-              <h3 className="rescatttl">{c}</h3>
-              <div className="reslist">
-                {items.filter((r) => r.cat === c).map((r) =>
-                  r.url && r.url.trim() ? (
-                    <a className="rescard link" href={r.url} target="_blank" rel="noopener noreferrer" key={r.id}>
-                      <span className="reslabel">{r.label || "Sans nom"}</span>
-                      {r.note && <span className="resnote">{r.note}</span>}
-                      <span className="resarrow">→</span>
-                    </a>
-                  ) : (
-                    <div className="rescard nolink" key={r.id}>
-                      <span className="reslabel">{r.label || "Sans nom"}</span>
-                      {r.note && <span className="resnote">{r.note}</span>}
-                      <span className="resmissing">lien à ajouter</span>
+            <div className="resblock" key={c}>
+              <div className="resband">{c}</div>
+              <div className="resrows">
+                {items.filter((r) => r.cat === c).map((r) => {
+                  const dom = resDomain(r.url);
+                  return (
+                    <div className="resline" key={r.id}>
+                      <div className="restxt">
+                        <span className="reslabel">{r.label || "Sans nom"}</span>
+                        {r.note && <span className="resnote">{r.note}</span>}
+                      </div>
+                      {dom ? (
+                        <a className="resdom" href={resHref(r.url)} target="_blank" rel="noopener noreferrer">→ {dom}</a>
+                      ) : (
+                        <span className="resmissing">lien à ajouter</span>
+                      )}
                     </div>
-                  )
-                )}
+                  );
+                })}
               </div>
             </div>
           ))}
@@ -3347,12 +3473,15 @@ function MeetingsView({ state, setMeetings }) {
 function JournalView({ state, addJournal, delJournal }) {
   const [text, setText] = useState("");
   const [kind, setKind] = useState("note");
+  const [jAt, setJAt] = useState("");
   const [sec, setSec] = useState("general");
   const [filter, setFilter] = useState("all");
   const submit = () => {
     if (!text.trim()) return;
-    addJournal({ section: sec, kind, text: text.trim() });
+    const at = kind === "jalon" ? dateInputToTs(jAt) : null;
+    addJournal({ section: sec, kind, text: text.trim(), ...(at ? { at } : {}) });
     setText("");
+    setJAt("");
   };
   const entries = filter === "all" ? state.journal : state.journal.filter((e) => e.section === filter);
   return (
@@ -3367,6 +3496,9 @@ function JournalView({ state, addJournal, delJournal }) {
               <button className={kind === "note" ? "on" : ""} onClick={() => setKind("note")}>Note</button>
               <button className={kind === "jalon" ? "on jalon" : "jalon"} onClick={() => setKind("jalon")}>Jalon</button>
             </div>
+            {kind === "jalon" && (
+              <input className="jalondate" type="date" value={jAt} onChange={(e) => setJAt(e.target.value)} title="Date du jalon — vide = aujourd'hui" />
+            )}
             <select value={sec} onChange={(e) => setSec(e.target.value)} className="secselect">
               <option value="general">Général</option>
               {ALL_KEYS.map((k) => <option key={k} value={k}>{SECTIONS[k].label}</option>)}
@@ -3398,6 +3530,11 @@ function EntryList({ entries, delJournal, showSection }) {
           <div className="entrymeta">
             <time>{formatDate(e.ts)}</time>
             {e.kind === "jalon" && <span className="jalonbadge">Jalon</span>}
+            {e.kind === "jalon" && e.at && (
+              <span className={"jalonat" + (isFutureJalon(e) ? " soon" : "")}>
+                {isFutureJalon(e) ? "visé le " : "daté du "}{formatDateShort(e.at)}
+              </span>
+            )}
             {showSection && <span className="secbadge">{secLabel(e.section)}</span>}
           </div>
           <p className="entrytext">{e.text}</p>
@@ -3415,6 +3552,26 @@ function formatDate(ts) {
   } catch (e) {
     return new Date(ts).toLocaleString();
   }
+}
+
+/* Jalons : date cible <-> valeur d'input date, en heure locale (pas d'UTC) */
+function dateInputToTs(v) {
+  if (!v) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  if (!m) return null;
+  return new Date(+m[1], +m[2] - 1, +m[3], 12, 0, 0).getTime();
+}
+function tsToDateInput(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function jalonTs(e) {
+  return e.at || e.ts;
+}
+function isFutureJalon(e) {
+  return jalonTs(e) > Date.now();
 }
 
 function formatDateShort(ts) {
@@ -3593,7 +3750,7 @@ function buildMarkdown(state, pct) {
     md += `## Journal\n\n`;
     state.journal.forEach((e) => {
       const secL = e.section === "general" ? "Général" : (SECTIONS[e.section] || {}).label || e.section;
-      md += `- [${formatDate(e.ts)}]${e.kind === "jalon" ? " **JALON**" : ""} (${secL}) ${e.text}\n`;
+      md += `- [${formatDate(e.ts)}]${e.kind === "jalon" ? " **JALON**" : ""}${e.kind === "jalon" && e.at ? ` (${isFutureJalon(e) ? "visé le " : "daté du "}${formatDateShort(e.at)})` : ""} (${secL}) ${e.text}\n`;
     });
     md += `\n`;
   }
@@ -3786,6 +3943,14 @@ textarea:focus,input:focus,select:focus{outline:none;border-color:var(--plum);bo
 .kindtoggle{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;flex:none;}
 .kindtoggle button{border:none;background:transparent;padding:7px 14px;font-size:13px;color:var(--ink-soft);cursor:pointer;transition:.15s;}
 .kindtoggle button.on{background:var(--plum);color:#fff;}
+/* Jalons — date cible & jalons à venir */
+.jalondate{flex:none;width:auto;font-size:12px;padding:5px 8px;color:var(--ink-soft);cursor:pointer;}
+.jalonat{font-family:'DM Sans',sans-serif;font-size:10.5px;letter-spacing:.04em;color:var(--stone);font-style:italic;}
+.jalonat.soon{color:var(--gold-deep);font-style:normal;border:1px dashed var(--band-line);border-radius:999px;padding:1px 7px;}
+.fstep.ffuture{opacity:.9;}
+.fstep.ffuture .fdot{background:var(--sand);border:1.5px dashed var(--gold);}
+.fstep.ffuture .ftext{color:var(--ink-soft);font-style:italic;}
+.fsoon{display:block;font-size:8.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold-deep);font-style:normal;margin-top:1px;}
 .kindtoggle button.jalon.on{background:var(--gold);color:#2a1a05;}
 .secselect{width:auto;min-width:150px;flex:none;cursor:pointer;}
 .addbtn{align-self:flex-start;background:var(--ink);color:#fff;border:none;border-radius:9px;padding:9px 18px;font-size:14px;font-weight:500;cursor:pointer;transition:.15s;}
@@ -3899,6 +4064,28 @@ input.fname{flex:1;font-weight:500;}
 /* assumptions map */
 .amap{background:var(--sand-2);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin-bottom:4px;}
 .amaphead{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:10px;}
+/* Carte des assomptions — agrandissement */
+.amapzoom{background:none;border:1px solid var(--band-line);color:var(--gold-deep);font-family:'DM Sans',sans-serif;font-size:10.5px;letter-spacing:.08em;border-radius:999px;padding:4px 11px;cursor:pointer;flex:none;transition:background .15s,border-color .15s;}
+.amapzoom:hover{background:var(--band-faint);border-color:var(--gold);}
+.achipstar{color:var(--gold);margin-right:4px;}
+.achipcrit{border-color:var(--gold);}
+.amapmodal{position:fixed;inset:0;background:rgba(13,13,11,.72);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px;overflow:auto;}
+.amapmodalbox{background:var(--sand);border:1px solid var(--ink);width:100%;max-width:1000px;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,.4);}
+.amapmodalhead{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:18px 22px;border-bottom:1px solid var(--line);background:var(--card);}
+.amapmodalhead h3{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:22px;margin:0 0 3px;color:var(--ink);}
+.amapclose{background:none;border:none;font-size:26px;line-height:1;color:var(--stone);cursor:pointer;padding:0 4px;flex:none;}
+.amapclose:hover{color:var(--ink);}
+.amapmodalbody{padding:22px;overflow:auto;flex:1;}
+.amapmodalbody .amapgrid{gap:12px;}
+.amapmodalbody .amapcell{min-height:190px;}
+.amapmodalbody .achip{white-space:normal;text-align:left;line-height:1.4;}
+.amapmodalbody .amapqlabel{font-size:13px;}
+@media (max-width:560px){
+  .amapmodal{padding:10px;}
+  .amapmodalbody{padding:14px;}
+  .amapmodalbody .amapcell{min-height:120px;}
+  .amaphead{align-items:flex-start;}
+}
 .amaphead h3{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:19px;margin:0;color:var(--ink);}
 .amaphint{font-size:12px;color:var(--ink-soft);}
 .amapwrap{display:flex;gap:8px;align-items:stretch;}
@@ -4070,8 +4257,10 @@ input.fname{flex:1;font-weight:500;}
 .perlbl{display:block;font-size:11px;letter-spacing:.06em;color:var(--stone);margin:8px 0 3px;}
 /* Discovery */
 .disco{display:flex;flex-direction:column;gap:10px;}
-.discofilter{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;}
+.discofilter{display:flex;flex-direction:column;align-items:flex-start;gap:7px;margin-bottom:10px;}
 .discofilterlbl{font-family:'DM Sans',sans-serif;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--stone);}
+.discofilter .filterbar{flex-wrap:wrap;overflow-x:visible;margin:0;padding-bottom:0;width:100%;}
+.discofilter .filterbar button{white-space:normal;text-align:left;line-height:1.3;max-width:100%;}
 .discohead{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin:14px 0 6px;padding-top:10px;border-top:1px solid var(--line);}
 .discohead:first-of-type{border-top:none;padding-top:0;}
 .discohead h3{font-family:'Cormorant Garamond',serif;font-weight:600;font-size:22px;color:var(--ink);margin:0;}
@@ -4096,7 +4285,20 @@ input.fname{flex:1;font-weight:500;}
 .linkopt{display:flex;gap:7px;align-items:flex-start;font-size:13px;color:var(--ink);cursor:pointer;padding:4px 6px;border-radius:8px;}
 .linkopt.on{background:var(--band-faint);}
 .critcheck{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink-soft);margin:6px 0;cursor:pointer;}
-@media (max-width:560px){ .discohint{max-width:100%;text-align:left;} }
+@media (max-width:560px){
+  .discohint{max-width:100%;text-align:left;}
+  .rmbaractions{width:100%;flex-wrap:wrap;}
+  .rmbaractions .miniaction,.rmbaractions .addrow{flex:1;}
+  .discofilter .filterbar button{font-size:12.5px;padding:5px 11px;}
+  .probmeta{gap:6px;}
+  .hcritzone{padding:8px 9px;}
+}
+/* Groupe « Plus tard » — hors décompte d'avancement */
+.navlater{margin-top:4px;padding-top:10px;border-top:1px dashed var(--line);}
+.navlater .navgrouptitle{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;}
+.navlaterhint{font-size:8.5px;letter-spacing:.08em;text-transform:none;color:var(--stone);font-style:italic;opacity:.85;}
+.navlater .navitem{opacity:.62;}
+.navlater .navitem:hover,.navlater .navitem.on{opacity:1;}
 /* Pitch — aperçu éditorial */
 .pitchmod{display:flex;flex-direction:column;gap:4px;}
 .pitchpreview{display:flex;flex-direction:column;}
@@ -4107,26 +4309,47 @@ input.fname{flex:1;font-weight:500;}
 .pitcheyebrow{display:block;font-family:'DM Sans',sans-serif;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold-deep);margin-bottom:6px;}
 .pitchtext{font-size:15px;line-height:1.65;color:var(--ink);margin:0;white-space:pre-wrap;}
 .pitchtodo{margin-top:14px;padding-top:12px;border-top:1px dashed var(--line);font-size:12px;color:var(--stone);font-style:italic;}
+@media (max-width:560px){
+  .pitchpart{gap:10px;padding:14px 0;}
+  .pitchnum{font-size:20px;width:24px;}
+  .pitchtext{font-size:14.5px;}
+}
+/* Dév technique — aperçu */
+.techbar{display:flex;justify-content:flex-end;margin-bottom:10px;}
+.tech .resblock{margin-bottom:14px;}
+.techbadge{display:inline-block;font-family:'DM Sans',sans-serif;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;border:1px solid;border-radius:999px;padding:3px 9px;white-space:nowrap;flex:none;}
+.techdateview{font-size:12px;color:var(--stone);white-space:nowrap;flex:none;}
+.techstackview{margin:0;padding:16px 20px;font-size:14.5px;line-height:1.7;color:var(--ink);white-space:pre-wrap;}
+@media (max-width:560px){
+  .techstackview{padding:14px 16px;font-size:14px;}
+  .techbadge,.techdateview{white-space:normal;}
+}
 /* Ressources */
 .resview .rmedit{float:right;}
 .resgroups{display:flex;flex-direction:column;gap:18px;}
-.resgroup{}
-.rescatttl{font-family:'DM Sans',sans-serif;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--gold-deep);margin:0 0 8px;}
-.reslist{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;}
-.rescard{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;text-decoration:none;color:var(--ink);transition:border-color .15s,background .15s;}
-.rescard.link:hover{border-color:var(--gold);background:var(--band-faint);}
-.reslabel{font-family:'Cormorant Garamond',serif;font-size:17px;color:var(--ink);flex:1;line-height:1.2;}
-.resnote{font-size:11px;color:var(--ink-soft);}
-.resarrow{font-family:'DM Sans',sans-serif;color:var(--gold-deep);font-size:15px;flex:none;}
-.rescard.nolink{opacity:.72;}
-.resmissing{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--stone);font-style:italic;flex:none;}
+.resblock{border:1px solid var(--ink);}
+.resband{background:var(--ink);color:var(--band-line);font-family:'DM Sans',sans-serif;font-size:11px;font-weight:400;letter-spacing:.2em;text-transform:uppercase;padding:14px 20px;}
+.resrows{background:var(--sand);}
+.resline{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 20px;border-bottom:1px solid var(--line);}
+.resline:last-child{border-bottom:none;}
+.restxt{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.reslabel{font-size:16px;color:var(--ink);line-height:1.25;}
+.resnote{font-size:13px;color:var(--stone);line-height:1.45;}
+.resdom{font-size:13px;color:var(--gold);text-decoration:none;border-bottom:1px solid var(--gold);padding-bottom:2px;white-space:nowrap;flex:none;transition:color .15s,border-color .15s;}
+.resdom:hover{color:var(--gold-deep);border-color:var(--gold-deep);}
+.resmissing{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--stone);font-style:italic;opacity:.7;white-space:nowrap;flex:none;}
 .resedit{display:flex;flex-direction:column;gap:8px;}
 .resrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
 .resrow .grow{flex:1;min-width:150px;}
 .resrow .grow2{flex:2;min-width:180px;}
 .rescat{width:130px;flex:none;cursor:pointer;}
 .resnoteinput{flex:1;min-width:140px;}
-@media (max-width:560px){ .resrow .grow,.resrow .grow2,.resrow .rescat,.resrow .resnoteinput{flex-basis:100%;width:100%;} }
+@media (max-width:560px){
+  .resrow .grow,.resrow .grow2,.resrow .rescat,.resrow .resnoteinput{flex-basis:100%;width:100%;}
+  .resline{flex-direction:column;align-items:flex-start;gap:8px;padding:14px 16px;}
+  .resband{padding:12px 16px;font-size:10px;}
+  .resdom,.resmissing{white-space:normal;}
+}
 /* TAM / SAM / SOM */
 .tsom{display:flex;flex-direction:column;gap:12px;margin-bottom:20px;padding-bottom:18px;border-bottom:1px solid var(--line);}
 .tsombar{display:flex;justify-content:space-between;align-items:baseline;gap:10px;}
@@ -4170,6 +4393,8 @@ input.fname{flex:1;font-weight:500;}
   .tsom-tam{width:280px;height:280px;}
   .tsom-sam{width:188px;height:188px;}
   .tsom-som{width:106px;height:106px;}
+  .tsomlvlhead{flex-wrap:wrap;}
+  .tsomlvlhead select{width:100%;}
 }
 /* réunions & ateliers */
 .mtglist{display:flex;flex-direction:column;gap:12px;}
