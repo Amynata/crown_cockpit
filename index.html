@@ -816,10 +816,58 @@ function buildDefault() {
     journal: [],
     meetings: [
       {
+        id: 1783932600000,
+        ts: 1783932600000,
+        date: "10 juil. 2026",
+        title: "1:1 Onboarding — Cadrage MVP & discovery",
+        kind: "1to1",
+        themes: ["Start Up Banlieue", "Discovery", "MVP"],
+        epistemic: "Ce contenu vient d'un **compte-rendu de 1:1**, pas de recherche terrain. Les éléments _à arbitrer_ sont des **recommandations du mentor** : des avis d'une personne, ni des faits validés, ni tes décisions. Une reco ne devient une décision qu'une fois tranchée par toi, avec sa raison. Rien ici ne constitue une preuve d'hypothèse.",
+        arbitrages: [
+          {
+            id: "oto-seed-1",
+            titre: "Recentrer le MVP : conseil + génération d'image, pas simulation temps réel",
+            corps: "Reco du mentor : abandonner la simulation temps réel pour le MVP. Phase 1 — photo + brief, recommandation de styles et de produits. Phase 2 — génération d'image à partir du brief, potentiellement **asynchrone** (jusqu'à 24 h de délai acceptable en MVP).",
+            analyse: "L'asynchrone touche au cœur du positionnement. Ta promesse est la _référence partagée avant réservation_ — un délai de 24 h est compatible avec ça (l'alignement n'a pas besoin d'être instantané), mais pas avec un usage en salon. À trancher explicitement, pas par défaut.",
+            question: "Le délai asynchrone casse-t-il l'usage, ou seulement une préférence esthétique de ma part ?",
+          },
+          {
+            id: "oto-seed-2",
+            titre: "Interface vocale (Eleven Labs) pour lever la barrière de lecture côté coiffeuses",
+            corps: "Reco du mentor : une partie des coiffeuses cibles pourraient être peu à l'aise à l'écrit, ce qui ferait de l'UI textuelle un frein. Piste : agent vocal multilingue (wolof évoqué) pour le brief et la restitution.",
+            analyse: "**C'est une hypothèse, pas un constat.** « Certaines coiffeuses ont un faible niveau de littératie » n'est étayé par aucune donnée : ni la proportion, ni l'effet sur l'adoption. À verser au registre Hypothèses, pas à la roadmap. Risque : construire du vocal pour un frein qui n'existe pas — ou faire un raccourci sur ta cible.",
+            question: "Est-ce que la littératie est un vrai frein mesuré, ou une supposition sur mon segment ?",
+          },
+          {
+            id: "oto-seed-3",
+            titre: "Approfondir l'analyse concurrentielle au-delà du pitch",
+            corps: "Reco du mentor : le benchmark présenté au pitch est jugé insuffisant.",
+            analyse: "Le cockpit couvre déjà Zenaba, Planity et L'Oréal Style My Hair. Le trou probable n'est pas la liste des concurrents, mais les _substituts réels_ : Pinterest, Instagram, WhatsApp — et ChatGPT, déjà utilisé pour du conseil capillaire. C'est contre eux que tu es en concurrence, pas contre Planity.",
+            question: "",
+          },
+        ],
+        actions: [
+          { id: "oto-seed-a1", titre: "Préparer les questions d'entretien et lancer interviews 1:1 + formulaire quanti", note: "Recoupe le jalon existant « protocole d'interviews ». Priorité côté coiffeuses — c'est là qu'est le risque.", done: false },
+          { id: "oto-seed-a2", titre: "Formaliser le partenariat avec la coiffeuse qui a autorisé l'accès à ses photos Instagram", note: "Le plus structurant du lot. Adossé au moat « données consenties » — et ça peut devenir le premier contrat B2B.", done: false },
+          { id: "oto-seed-a3", titre: "Tester Gemini, GPT-Image, Kling, Midjourney pour la génération", note: "La grille de benchmark existante compare Qwen-Image-Edit et Flux Kontext. Élargir le champ ou justifier le périmètre — les deux se défendent, mais il faut choisir.", done: false },
+          { id: "oto-seed-a4", titre: "Explorer Eleven Labs (vocal / audio)", note: "Conditionné à l'arbitrage ci-dessus. Ne pas explorer avant d'avoir vérifié le frein.", done: false },
+        ],
+        risques: [
+          {
+            id: "oto-seed-r1",
+            titre: "Conformité données personnelles — stockage des photos utilisatrices",
+            corps: "Signalé en 1:1 comme nécessitant une revue de conformité. Stocker des photos de visages = données biométriques potentielles au sens du RGPD, sur une population identifiable.",
+            note: "Ce n'est pas périphérique : c'est adjacent à ta thèse « données consenties comme moat ». Le consentement de la coiffeuse ne vaut pas consentement des personnes photographiées. À traiter **avant** la constitution du dataset. _Avis non juridique — à faire valider par un professionnel._",
+          },
+        ],
+        notes: "Source : compte-rendu Notion — base « Start Up Banlieue ». Le verbatim complet reste dans Notion ; seules les conséquences vivent ici.",
+      },
+      {
         id: 1784070198231,
         ts: 1784070198231,
         date: "11 juil. 2026",
         title: "Ateliers Utilisateurs",
+        kind: "atelier",
         themes: ["Recherche Utilisateurs", "Personas", "Segment"],
         notes: `## Source : The Mom Test
 Dans un première partie, il faut cadrer les hypothèses et la problématique
@@ -3845,16 +3893,170 @@ function NotesEditor({ value, onChange, rows = 5, placeholder, variant = "note" 
   );
 }
 
+/* ---------------- One to One : rendu éditorial ---------------- */
+function otoHas(m) {
+  return (
+    ((m.arbitrages || []).length + (m.actions || []).length + (m.risques || []).length) > 0 ||
+    !!String(m.epistemic || "").trim()
+  );
+}
+
+function OtoBlock({ title, count, children }) {
+  return (
+    <div className="otosec">
+      <div className="otosechead">
+        <span className="otosecname">{title}</span>
+        {count ? <span className="otoseccount">{count}</span> : null}
+      </div>
+      <div className="otosecbody">{children}</div>
+    </div>
+  );
+}
+
+function OneToOnePreview({ m }) {
+  const arb = m.arbitrages || [];
+  const act = m.actions || [];
+  const ris = m.risques || [];
+  const epi = String(m.epistemic || "").trim();
+  const notes = String(m.notes || "").trim();
+  const isOto = m.kind === "1to1";
+  if (!otoHas(m) && !notes) {
+    return <p className="empty">Rien à afficher. Clique « Éditer » pour remplir cette page.</p>;
+  }
+  return (
+    <div className="otoprev">
+      <div className="otohead">
+        <div>
+          <div className="otoeyebrow">{isOto ? "Compte-rendu · One to One" : "Atelier"}</div>
+          <div className="ototitle">{m.title || "Sans titre"}</div>
+        </div>
+        <div className="otometa">{m.date}</div>
+      </div>
+
+      {epi && (
+        <div className="otoepi">
+          <div className="otoepilbl">Statut épistémique</div>
+          <div className="otoepitxt" dangerouslySetInnerHTML={{ __html: mdToHtml(epi) }} />
+        </div>
+      )}
+
+      {arb.length > 0 && (
+        <OtoBlock title="À arbitrer" count={arb.length + (arb.length > 1 ? " éléments" : " élément")}>
+          {arb.map((a) => (
+            <div className="otoitem" key={a.id}>
+              <div className="otoitemtop">
+                <span className="otoitemtitle">{a.titre || "Sans titre"}</span>
+                <span className="otobadge arb">À arbitrer</span>
+              </div>
+              {a.corps && <div className="otoitembody" dangerouslySetInnerHTML={{ __html: mdToHtml(a.corps) }} />}
+              {a.analyse && <div className="otoitemsrc" dangerouslySetInnerHTML={{ __html: mdToHtml(a.analyse) }} />}
+              {a.question && <div className="otoq">{a.question}</div>}
+            </div>
+          ))}
+        </OtoBlock>
+      )}
+
+      {act.length > 0 && (
+        <OtoBlock title="Actions engagées" count={act.length + (act.length > 1 ? " items" : " item")}>
+          {act.map((a) => (
+            <div className="otoact" key={a.id}>
+              <span className={"otoactbox" + (a.done ? " on" : "")} />
+              <div className="otoacttxt">
+                <span className={a.done ? "otodone" : ""}>{a.titre || "Sans titre"}</span>
+                {a.note && <span className="otoactnote">{a.note}</span>}
+              </div>
+            </div>
+          ))}
+        </OtoBlock>
+      )}
+
+      {ris.length > 0 && (
+        <OtoBlock title="Risques signalés" count={ris.length + (ris.length > 1 ? " items" : " item")}>
+          {ris.map((r) => (
+            <div className="otoitem" key={r.id}>
+              <div className="otoitemtop">
+                <span className="otoitemtitle">{r.titre || "Sans titre"}</span>
+                <span className="otobadge ris">Risque</span>
+              </div>
+              {r.corps && <div className="otoitembody" dangerouslySetInnerHTML={{ __html: mdToHtml(r.corps) }} />}
+              {r.note && <div className="otoitemsrc" dangerouslySetInnerHTML={{ __html: mdToHtml(r.note) }} />}
+            </div>
+          ))}
+        </OtoBlock>
+      )}
+
+      {notes && (
+        <OtoBlock title="Notes">
+          <div className="otonotes" dangerouslySetInnerHTML={{ __html: mdToHtml(notes) }} />
+        </OtoBlock>
+      )}
+    </div>
+  );
+}
+
+function OtoRows({ label, help, rows, fields, onChange, addLabel, withDone }) {
+  const list = rows || [];
+  const add = () => {
+    const base = { id: rid("oto") };
+    fields.forEach((f) => { base[f.k] = ""; });
+    if (withDone) base.done = false;
+    onChange([...list, base]);
+  };
+  const upd = (id, p) => onChange(list.map((r) => (r.id === id ? { ...r, ...p } : r)));
+  const del = (id) => onChange(list.filter((r) => r.id !== id));
+  return (
+    <div className="otoed">
+      <div className="otoedhead">
+        <div>
+          <span className="perlbl">{label}</span>
+          {help && <p className="ovhelp">{help}</p>}
+        </div>
+        <button className="miniaction" onClick={add}>+ {addLabel}</button>
+      </div>
+      {list.length === 0 ? (
+        <p className="empty">Aucun élément — et c'est une réponse valable.</p>
+      ) : (
+        list.map((r) => (
+          <div className="otoedrow" key={r.id}>
+            {fields.map((f) =>
+              f.long ? (
+                <textarea key={f.k} rows={2} placeholder={f.ph} value={r[f.k] || ""} onChange={(e) => upd(r.id, { [f.k]: e.target.value })} />
+              ) : (
+                <input key={f.k} placeholder={f.ph} value={r[f.k] || ""} onChange={(e) => upd(r.id, { [f.k]: e.target.value })} />
+              )
+            )}
+            <div className="otoedactions">
+              {withDone && (
+                <label className="otoedcheck">
+                  <input type="checkbox" checked={!!r.done} onChange={(e) => upd(r.id, { done: e.target.checked })} /> Faite
+                </label>
+              )}
+              <button className="ghostdel" onClick={() => del(r.id)}>Supprimer</button>
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 function MeetingsView({ state, setMeetings }) {
   const meetings = state.meetings || [];
   const [openId, setOpenId] = useState(null);
+  const [edit, setEdit] = useState(false);
   const [filterTheme, setFilterTheme] = useState(null);
   const [themeInput, setThemeInput] = useState("");
 
+  const open = (id) => { setOpenId(id); setEdit(false); };
   const add = () => {
-    const m = { id: Date.now(), ts: Date.now(), date: formatDateShort(Date.now()), title: "", notes: "", themes: [] };
+    const m = {
+      id: Date.now(), ts: Date.now(), date: formatDateShort(Date.now()),
+      title: "", notes: "", themes: [],
+      kind: "atelier", epistemic: "", arbitrages: [], actions: [], risques: [],
+    };
     setMeetings([m, ...meetings]);
     setOpenId(m.id);
+    setEdit(true);
   };
   const upd = (id, p) => setMeetings(meetings.map((m) => (m.id === id ? { ...m, ...p } : m)));
   const del = (id) => { setMeetings(meetings.filter((m) => m.id !== id)); setOpenId(null); };
@@ -3871,15 +4073,29 @@ function MeetingsView({ state, setMeetings }) {
       upd(current.id, { themes: [...themes, t] });
       setThemeInput("");
     };
+    const isOto = current.kind === "1to1";
     return (
       <div className="section">
         <div className="sechead">
           <div><button className="backbtn" onClick={() => setOpenId(null)}>← Toutes les pages</button></div>
-          <button className="ghostdel" onClick={() => del(current.id)}>Supprimer</button>
+          <div className="rmbaractions">
+            <button className={"rmedit" + (edit ? " on" : "")} onClick={() => setEdit((e) => !e)}>{edit ? "Aperçu" : "Éditer"}</button>
+            <button className="ghostdel" onClick={() => del(current.id)}>Supprimer</button>
+          </div>
         </div>
+        {!edit ? (
+          <OneToOnePreview m={current} />
+        ) : (
         <div className="pageedit">
           <input className="pagetitle" placeholder="Titre de la page (atelier, réunion…)" value={current.title} onChange={(e) => upd(current.id, { title: e.target.value })} />
           <input className="pagedate" placeholder="Date" value={current.date} onChange={(e) => upd(current.id, { date: e.target.value })} />
+          <div className="otokindrow">
+            <span className="perlbl">Type de page</span>
+            <div className="otokind">
+              <button className={"tfchip" + (!isOto ? " on" : "")} onClick={() => upd(current.id, { kind: "atelier" })}>Atelier</button>
+              <button className={"tfchip" + (isOto ? " on" : "")} onClick={() => upd(current.id, { kind: "1to1" })}>One to One</button>
+            </div>
+          </div>
           <div className="themerow">
             <span className="perlbl">Thématiques</span>
             <div className="themechips">
@@ -3895,21 +4111,67 @@ function MeetingsView({ state, setMeetings }) {
             </div>
           </div>
           <NotesEditor value={current.notes} onChange={(v) => upd(current.id, { notes: v })} rows={12} placeholder="Notes… (## Titre, **gras**, - puce)" />
-          <div className="related">
-            <span className="perlbl">Pages liées (mêmes thématiques)</span>
-            {related.length === 0 ? (
-              <p className="empty">Aucune page ne partage ces thématiques pour l'instant.</p>
-            ) : (
-              <ul className="relatedlist">
-                {related.map((m) => (
-                  <li key={m.id} onClick={() => setOpenId(m.id)}>
-                    <span className="reltitle">{m.title || "Sans titre"}</span>
-                    <span className="reldate">{m.date}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+          {isOto && (
+            <>
+              <NotesEditor
+                value={current.epistemic}
+                onChange={(v) => upd(current.id, { epistemic: v })}
+                rows={4}
+                placeholder="Statut épistémique — d'où vient ce contenu, et ce qu'il ne prouve pas."
+              />
+              <OtoRows
+                label="À arbitrer"
+                help="Des recommandations, pas tes décisions. Une reco ne devient une décision qu'une fois tranchée par toi."
+                rows={current.arbitrages}
+                onChange={(v) => upd(current.id, { arbitrages: v })}
+                addLabel="Arbitrage"
+                fields={[
+                  { k: "titre", ph: "Ce qui est recommandé" },
+                  { k: "corps", ph: "Ce qui a été dit", long: true },
+                  { k: "analyse", ph: "Ton analyse — impact réel, ce que ça ne prouve pas", long: true },
+                  { k: "question", ph: "La question à trancher" },
+                ]}
+              />
+              <OtoRows
+                label="Actions engagées"
+                rows={current.actions}
+                onChange={(v) => upd(current.id, { actions: v })}
+                addLabel="Action"
+                withDone
+                fields={[
+                  { k: "titre", ph: "L'action" },
+                  { k: "note", ph: "Note — recoupement, condition, priorité", long: true },
+                ]}
+              />
+              <OtoRows
+                label="Risques signalés"
+                rows={current.risques}
+                onChange={(v) => upd(current.id, { risques: v })}
+                addLabel="Risque"
+                fields={[
+                  { k: "titre", ph: "Le risque" },
+                  { k: "corps", ph: "Ce qui a été signalé", long: true },
+                  { k: "note", ph: "Pourquoi ça compte / quoi en faire", long: true },
+                ]}
+              />
+            </>
+          )}
+        </div>
+        )}
+        <div className="related">
+          <span className="perlbl">Pages liées (mêmes thématiques)</span>
+          {related.length === 0 ? (
+            <p className="empty">Aucune page ne partage ces thématiques pour l'instant.</p>
+          ) : (
+            <ul className="relatedlist">
+              {related.map((m) => (
+                <li key={m.id} onClick={() => open(m.id)}>
+                  <span className="reltitle">{m.title || "Sans titre"}</span>
+                  <span className="reldate">{m.date}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
     );
@@ -3938,8 +4200,11 @@ function MeetingsView({ state, setMeetings }) {
       ) : (
         <div className="pagelist">
           {list.map((m) => (
-            <button className="pagerow" key={m.id} onClick={() => setOpenId(m.id)}>
-              <span className="pagerowtitle">{m.title || "Sans titre"}</span>
+            <button className="pagerow" key={m.id} onClick={() => open(m.id)}>
+              <span className="pagerowtitle">
+                {m.kind === "1to1" && <span className="otobadge oto">1:1</span>}
+                {m.title || "Sans titre"}
+              </span>
               <span className="pagerowmeta">
                 {(m.themes || []).map((t) => <span className="themechip sm" key={t}>{t}</span>)}
                 <span className="pagerowdate">{m.date}</span>
@@ -4982,6 +5247,64 @@ input.fname{flex:1;font-weight:500;}
   .tsomlvlhead{flex-wrap:wrap;}
   .tsomlvlhead select{width:100%;}
 }
+/* ---- One to One : rendu éditorial ---- */
+.otoprev{border:1px solid var(--ink);background:var(--card);}
+.otohead{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;padding:26px 28px;border-bottom:1px solid var(--ink);}
+.otoeyebrow{font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--gold);margin-bottom:10px;}
+.ototitle{font-family:'Cormorant Garamond',serif;font-size:29px;font-weight:500;line-height:1.05;color:var(--ink);}
+.otometa{font-size:11px;color:var(--stone);letter-spacing:.08em;text-align:right;white-space:nowrap;}
+.otoepi{background:var(--ink);color:var(--band-line);padding:20px 28px;}
+.otoepilbl{font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--gold);margin-bottom:9px;}
+.otoepitxt p{margin:0 0 6px;font-size:13px;line-height:1.7;}
+.otoepitxt strong{color:var(--sand);font-weight:500;}
+.otoepitxt ul{margin:4px 0 4px 16px;}
+.otosec{border-top:1px solid var(--ink);}
+.otosechead{display:flex;justify-content:space-between;align-items:baseline;gap:14px;padding:13px 28px;border-bottom:1px solid var(--ink);}
+.otosecname{font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--gold);}
+.otoseccount{font-size:11px;color:var(--stone);letter-spacing:.08em;}
+.otosecbody{padding:20px 28px;}
+.otoitem{padding:16px 0;border-bottom:1px solid var(--line);}
+.otoitem:last-child{border-bottom:none;}
+.otoitem:first-child{padding-top:0;}
+.otoitemtop{display:flex;align-items:baseline;gap:10px;margin-bottom:7px;flex-wrap:wrap;}
+.otoitemtitle{font-family:'Cormorant Garamond',serif;font-size:19px;font-weight:600;line-height:1.25;}
+.otobadge{font-size:9px;letter-spacing:.14em;text-transform:uppercase;padding:3px 8px;border:1px solid var(--stone);color:var(--stone);border-radius:3px;white-space:nowrap;}
+.otobadge.arb{border-color:var(--gold);color:var(--gold-deep);}
+.otobadge.ris{background:var(--ink);border-color:var(--ink);color:var(--band-line);}
+.otobadge.oto{border-color:var(--gold);color:var(--gold-deep);margin-right:8px;}
+.otoitembody p{margin:0 0 6px;font-size:13px;line-height:1.75;}
+.otoitembody ul,.otoitemsrc ul{margin:4px 0 4px 16px;}
+.otoitemsrc{margin-top:9px;padding-left:11px;border-left:1px solid var(--band-line);}
+.otoitemsrc p{margin:0 0 5px;font-size:11.5px;line-height:1.65;color:var(--stone);}
+.otoq{margin-top:9px;font-family:'Cormorant Garamond',serif;font-size:16px;font-style:italic;color:var(--gold-deep);line-height:1.4;}
+.otoact{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--line);align-items:flex-start;}
+.otoact:last-child{border-bottom:none;}
+.otoact:first-child{padding-top:0;}
+.otoactbox{width:11px;height:11px;border:1px solid var(--ink);flex:none;border-radius:2px;margin-top:4px;}
+.otoactbox.on{background:var(--ink);}
+.otoacttxt{font-size:13px;line-height:1.6;}
+.otodone{text-decoration:line-through;color:var(--stone);}
+.otoactnote{display:block;color:var(--stone);font-size:11.5px;margin-top:3px;line-height:1.6;}
+.otonotes p{margin:0 0 6px;font-size:13px;line-height:1.7;}
+.otonotes ul{margin:4px 0 8px 16px;}
+.otonotes h2,.otonotes h3,.otonotes h4{font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:600;margin:14px 0 6px;}
+/* éditeur One to One */
+.otoed{border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--card);}
+.otoedhead{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:8px;}
+.otoedhead .ovhelp{margin:3px 0 0;}
+.otoedrow{display:flex;flex-direction:column;gap:6px;padding:10px 0;border-bottom:1px solid var(--line);}
+.otoedrow:last-child{border-bottom:none;}
+.otoedactions{display:flex;justify-content:flex-end;align-items:center;gap:10px;}
+.otoedcheck{font-size:12px;color:var(--ink-soft);display:flex;align-items:center;gap:5px;}
+.otokindrow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.otokind{display:flex;gap:6px;}
+@media(max-width:640px){
+  .otohead{flex-direction:column;align-items:flex-start;gap:12px;}
+  .otometa{text-align:left;}
+  .otohead,.otoepi,.otosechead,.otosecbody{padding-left:16px;padding-right:16px;}
+  .ototitle{font-size:24px;}
+}
+
 /* réunions & ateliers */
 .mtglist{display:flex;flex-direction:column;gap:12px;}
 .mtgcard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;}
