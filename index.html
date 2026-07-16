@@ -770,6 +770,19 @@ function DEFAULT_RESOURCES() {
   ];
 }
 
+/* ---- Affinity board : post-its déplaçables (verbatims) ---- */
+const NOTE_COLORS = [
+  { id: "kraft", bg: "#e9ddc7", pin: "#8b7355", label: "Neutre" },
+  { id: "amber", bg: "#f2dcc2", pin: "#c9854a", label: "Coiffeuse" },
+  { id: "emerald", bg: "#d3e4db", pin: "#2d7a5f", label: "Coiffée" },
+  { id: "violet", bg: "#e0d8ef", pin: "#6b4fa6", label: "Autre" },
+];
+const NOTE_W = 172;
+const NOTE_H = 116;
+function DEFAULT_AFFINITY() {
+  return { notes: [], zones: [] };
+}
+
 function buildDefault() {
   const fields = {};
   ALL_KEYS.forEach((k) => {
@@ -854,6 +867,7 @@ Sur une echelle de 1 à 5 ( Peu douloureux et 5 trés douloureux) A quel point t
       },
     ],
     interviews: [],
+    affinity: DEFAULT_AFFINITY(),
     todos: [],
     resources: DEFAULT_RESOURCES(),
   };
@@ -964,6 +978,8 @@ function App() {
             if (!Array.isArray(merged.interviews)) merged.interviews = [];
             if (!Array.isArray(merged.todos)) merged.todos = [];
             if (!Array.isArray(merged.resources)) merged.resources = DEFAULT_RESOURCES();
+            if (!merged.affinity || !Array.isArray(merged.affinity.notes)) merged.affinity = DEFAULT_AFFINITY();
+            else if (!Array.isArray(merged.affinity.zones)) merged.affinity = { ...merged.affinity, zones: [] };
             if (!merged.touched || typeof merged.touched !== "object") merged.touched = {};
             prefillEmptyFields(merged);
             applyOneTimeSeeds(merged);
@@ -1032,6 +1048,7 @@ function App() {
   const setTsom = (ts) => setState((p) => ({ ...p, tsom: ts, touched: { ...p.touched, marche: true } }));
   const setMeetings = (rows) => setState((p) => ({ ...p, meetings: rows }));
   const setInterviews = (rows) => setState((p) => ({ ...p, interviews: rows }));
+  const setAffinity = (a) => setState((p) => ({ ...p, affinity: a }));
   const setResources = (rows) => setState((p) => ({ ...p, resources: rows }));
   const setTodos = (rows) => setState((p) => ({ ...p, todos: rows }));
 
@@ -1170,7 +1187,7 @@ function App() {
           ) : active === "meetings" ? (
             <MeetingsView state={state} setMeetings={setMeetings} />
           ) : active === "interviews" ? (
-            <InterviewsView state={state} setInterviews={setInterviews} />
+            <InterviewsView state={state} setInterviews={setInterviews} setAffinity={setAffinity} setDiscovery={setDiscovery} />
           ) : active === "resources" ? (
             <ResourcesView state={state} setResources={setResources} />
           ) : (
@@ -1468,6 +1485,175 @@ function Overview({ state, pct, go, setStatus, addJournal, setTodos }) {
 }
 
 /* ---------------- Section router ---------------- */
+/* ---- Import Markdown par section ---- */
+/* Découpe un texte en éléments : puces (-, *, •), numérotés (1., 1-, 1)) ou lignes simples.
+   Ne devine rien : un élément = une ligne de liste ou un paragraphe. */
+function parseMdItems(txt) {
+  const out = [];
+  const lines = String(txt || "").split("\n");
+  let cur = null;
+  const push = () => { if (cur && cur.trim()) out.push(cur.trim().replace(/\s+/g, " ")); cur = null; };
+  lines.forEach((raw) => {
+    const l = raw.trim();
+    if (!l) { push(); return; }
+    if (/^#{1,6}\s/.test(l)) { push(); return; }              // titre → ignoré
+    if (/^([-*_])\1{2,}$/.test(l)) { push(); return; }          // règle horizontale
+    const m = /^(?:[-*•▪·]|\d+\s*[.)\-–])\s+(.*)$/.exec(l);
+    if (m) { push(); cur = m[1]; return; }
+    if (cur !== null) cur += " " + l;                           // continuation
+    else cur = l;                                               // ligne simple
+  });
+  push();
+  return out.filter((s) => s.length > 1);
+}
+
+/* Où un import peut atterrir, par section */
+const IMPORT_INTO = {
+  hypotheses: [
+    { id: "hypotheses", label: "Hypothèses" },
+    { id: "problemes", label: "Problématiques" },
+    { id: "opportunites", label: "Opportunités" },
+  ],
+  segments: [
+    { id: "segments", label: "Segments" },
+    { id: "personas", label: "Personas" },
+  ],
+  tech: [
+    { id: "services", label: "Intégrations & services" },
+    { id: "decisions", label: "Décisions techniques" },
+    { id: "chantiers", label: "Chantiers" },
+  ],
+};
+
+function SectionImport({ k, state, api }) {
+  const targets = IMPORT_INTO[k] || null;
+  const isText = !targets;
+  const [open, setOpen] = useState(false);
+  const [txt, setTxt] = useState("");
+  const [into, setInto] = useState(targets ? targets[0].id : "body");
+  const [mode, setMode] = useState("append");
+  const [sel, setSel] = useState([]);
+  const [step, setStep] = useState("paste");
+  const s = SECTIONS[k];
+  const allowed = targets || s.type === "text" || s.type === "finances";
+
+  const items = parseMdItems(txt);
+
+  const onFile = (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => { setTxt(String(r.result || "")); };
+    r.readAsText(f);
+  };
+
+  const goPick = () => {
+    const it = parseMdItems(txt);
+    setSel(it.map((_, i) => i));
+    setStep("pick");
+  };
+
+  const toggle = (i) => setSel(sel.indexOf(i) >= 0 ? sel.filter((x) => x !== i) : [...sel, i]);
+  const chosen = () => items.filter((_, i) => sel.indexOf(i) >= 0);
+
+  const reset = () => { setTxt(""); setSel([]); setStep("paste"); setOpen(false); };
+
+  if (!allowed) return null;
+
+  const doTextImport = () => {
+    const cur = (state.fields[k] && state.fields[k].body) || "";
+    const val = mode === "replace" ? txt.trim() : cur ? cur + "\n\n" + txt.trim() : txt.trim();
+    api.setField(k, "body", val);
+    reset();
+  };
+
+  const doItemsImport = () => {
+    const list = chosen();
+    if (!list.length) return;
+    if (into === "hypotheses") {
+      api.setHypotheses([
+        ...(state.hypotheses || []),
+        ...list.map((t) => ({ id: rid("hy"), open: false, claim: t, type: "probleme", status: "atester", importance: "high", certainty: "low", note: "", method: "", next: "", preuve: "", probs: [], crit: false })),
+      ]);
+    } else if (into === "problemes" || into === "opportunites") {
+      const dv = state.discovery && Array.isArray(state.discovery.problems) ? state.discovery : DEFAULT_DISCOVERY();
+      if (into === "problemes") {
+        api.setDiscovery({ ...dv, problems: [...(dv.problems || []), ...list.map((t) => ({ id: rid("pb"), intitule: t, cluster: "", priorite: "nonprio", open: false, verbatims: [] }))] });
+      } else {
+        api.setDiscovery({ ...dv, opps: [...(dv.opps || []), ...list.map((t) => ({ id: rid("op"), intitule: t, probs: [], statut: "emergente", source: "", open: false }))] });
+      }
+    } else if (into === "segments" || into === "personas") {
+      const sp = state.segper || DEFAULT_SEGPER();
+      if (into === "segments") api.setSegper({ ...sp, segments: [...(sp.segments || []), ...list.map((t) => ({ id: rid("sg"), name: t, type: "B2C", size: "", need: "", note: "" }))] });
+      else api.setSegper({ ...sp, personas: [...(sp.personas || []), ...list.map((t) => ({ id: rid("pe"), name: t, tagline: "", type: "B2C", context: "", goals: "", pains: "", quote: "" }))] });
+    } else if (into === "services" || into === "decisions" || into === "chantiers") {
+      const tc = state.tech || DEFAULT_TECH();
+      if (into === "services") api.setTech({ ...tc, services: [...(tc.services || []), ...list.map((t) => ({ id: rid("sv"), name: t, role: "", status: "À intégrer" }))] });
+      else if (into === "decisions") api.setTech({ ...tc, decisions: [...(tc.decisions || []), ...list.map((t) => ({ id: rid("dc"), decision: t, why: "", date: "" }))] });
+      else api.setTech({ ...tc, chantiers: [...(tc.chantiers || []), ...list.map((t) => ({ id: rid("ch"), label: t, status: "À faire" }))] });
+    }
+    reset();
+  };
+
+  return (
+    <div className="secexportwrap">
+      <button className={"secexport" + (open ? " on" : "")} onClick={() => setOpen((o) => !o)}>Importer</button>
+      {open && (
+        <div className="secexportpop secimportpop">
+          {step === "paste" ? (
+            <>
+              <span className="sxlbl">Coller du Markdown / texte</span>
+              <textarea className="sximp" rows={6} value={txt} placeholder={"- Hypothèse 1\n- Hypothèse 2\n1- Ça marche aussi"} onChange={(e) => setTxt(e.target.value)} />
+              <label className="sxfile">
+                <input type="file" accept=".md,.txt,text/markdown,text/plain" onChange={onFile} />
+                <span>ou choisir un fichier .md / .txt</span>
+              </label>
+              {isText ? (
+                <>
+                  <div className="sxmodes">
+                    <button className={mode === "append" ? "on" : ""} onClick={() => setMode("append")}>À la suite</button>
+                    <button className={mode === "replace" ? "on" : ""} onClick={() => setMode("replace")}>Remplacer</button>
+                  </div>
+                  <div className="sxactions">
+                    <button className="sxcopy" disabled={!txt.trim()} onClick={doTextImport}>Importer le texte</button>
+                  </div>
+                </>
+              ) : (
+                <div className="sxactions">
+                  <span className="sxcount">{items.length} détecté{items.length > 1 ? "s" : ""}</span>
+                  <button className="sxcopy" disabled={!items.length} onClick={goPick}>Suivant →</button>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <span className="sxlbl">Importer dans</span>
+              <select className="sxinto" value={into} onChange={(e) => setInto(e.target.value)}>
+                {targets.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+              </select>
+              <span className="sxlbl">Éléments ({sel.length}/{items.length})</span>
+              <div className="sxitems">
+                {items.map((t, i) => (
+                  <label className={"sxitem" + (sel.indexOf(i) >= 0 ? " on" : "")} key={i}>
+                    <input type="checkbox" checked={sel.indexOf(i) >= 0} onChange={() => toggle(i)} />
+                    <span>{t}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="sxactions">
+                <button className="sxmini" onClick={() => setSel(items.map((_, i) => i))}>Tout</button>
+                <button className="sxmini" onClick={() => setSel([])}>Rien</button>
+                <button className="sxmini" onClick={() => setStep("paste")}>←</button>
+                <button className="sxcopy" disabled={!sel.length} onClick={doItemsImport}>Importer {sel.length}</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SectionExport({ k, state }) {
   const blocks = SECTION_BLOCKS[k] || null;
   const [open, setOpen] = useState(false);
@@ -1524,6 +1710,7 @@ function SectionView({ k, state, setField, setStatus, setCap, setCrm, setFinance
           <h2>{s.label}</h2>
         </div>
         <div className="secheadright">
+          <SectionImport k={k} state={state} api={{ setField, setHypotheses, setDiscovery, setSegper, setTech }} />
           <SectionExport k={k} state={state} />
           <span className={"secstate " + (started ? "on" : "")}>{started ? "Entamée" : "À remplir"}</span>
         </div>
@@ -2179,6 +2366,7 @@ function ProblemsBlock({ d, upd, cf, hypsFor, oppsFor }) {
             <div className="probmeta">
               {p.cluster ? <span className="probcluster">{clab}</span> : <span className="probcluster muted">sans cluster</span>}
               <span className="probretro">{nh} hypothèse{nh > 1 ? "s" : ""} · {no} opportunité{no > 1 ? "s" : ""} liées</span>
+              {(p.verbatims || []).length > 0 && <span className="probvbc">{p.verbatims.length} verbatim{p.verbatims.length > 1 ? "s" : ""}</span>}
             </div>
             {p.open && (
               <div className="hbody">
@@ -2201,6 +2389,16 @@ function ProblemsBlock({ d, upd, cf, hypsFor, oppsFor }) {
                     </select>
                   </div>
                 </div>
+                {(p.verbatims || []).length > 0 && (
+                  <div className="field">
+                    <label>Verbatims — issus du board</label>
+                    <div className="probvbs">
+                      {p.verbatims.map((v, i) => (
+                        <p className="probvb" key={i}>« {v.text} »{v.src && <span> — {v.src}</span>}</p>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <p className="linkhint">Interviews liées : — <span className="muted">(compteur automatique au prochain livrable — le protocole d'interview)</span></p>
                 <button className="del hdel" onClick={() => delProb(p.id)} aria-label="Supprimer la problématique">Supprimer</button>
               </div>
@@ -3289,7 +3487,233 @@ function ResourcesView({ state, setResources }) {
 }
 
 /* ---------------- Interviews ---------------- */
-function InterviewsView({ state, setInterviews }) {
+/* ---------------- Affinity board ---------------- */
+function AffinityBoard({ state, setAffinity, setDiscovery }) {
+  const aff = state.affinity && Array.isArray(state.affinity.notes)
+    ? { zones: [], ...state.affinity }
+    : DEFAULT_AFFINITY();
+  const notes = aff.notes;
+  const zones = aff.zones || [];
+  const canvasRef = useRef(null);
+  const dragRef = useRef(null);
+  const [drag, setDrag] = useState(null);
+  const [editId, setEditId] = useState(null);
+  const [flash, setFlash] = useState(null);
+
+  const upd = (patchObj) => setAffinity({ ...aff, ...patchObj });
+  const patch = (id, p) => upd({ notes: notes.map((n) => (n.id === id ? { ...n, ...p } : n)) });
+  const del = (id) => { setEditId(null); upd({ notes: notes.filter((n) => n.id !== id) }); };
+  const patchZone = (id, p) => upd({ zones: zones.map((z) => (z.id === id ? { ...z, ...p } : z)) });
+  const delZone = (id) => upd({ zones: zones.filter((z) => z.id !== id) });
+
+  /* post-its contenus dans une zone — par géométrie (le centre du post-it) */
+  const notesIn = (z) =>
+    notes.filter((n) => {
+      const cx = n.x + NOTE_W / 2, cy = n.y + NOTE_H / 2;
+      return cx >= z.x && cx <= z.x + z.w && cy >= z.y && cy <= z.y + z.h;
+    });
+
+  const addZone = () => {
+    const y = zones.length ? Math.max(...zones.map((z) => z.y + z.h)) + 24 : 8;
+    upd({ zones: [...zones, { id: rid("zn"), label: "", x: 8, y, w: 400, h: 300 }] });
+  };
+
+  const toProblem = (z) => {
+    const inside = notesIn(z);
+    if (!z.label.trim() || !inside.length) return;
+    const dv = state.discovery && Array.isArray(state.discovery.problems) ? state.discovery : DEFAULT_DISCOVERY();
+    const prob = {
+      id: rid("pb"),
+      intitule: z.label.trim(),
+      cluster: "",
+      priorite: "nonprio",
+      open: false,
+      verbatims: inside.map((n) => ({ text: n.text, src: n.srcName || "" })),
+    };
+    setDiscovery({ ...dv, problems: [...(dv.problems || []), prob] });
+    patchZone(z.id, { done: true });
+    setFlash(z.id);
+    setTimeout(() => setFlash(null), 2200);
+  };
+
+  const freeSpot = (i) => {
+    const perRow = 4;
+    return { x: 24 + (i % perRow) * (NOTE_W + 16), y: 24 + Math.floor(i / perRow) * (NOTE_H + 16) };
+  };
+
+  const addNote = () => {
+    const id = rid("nt");
+    upd({ notes: [...notes, { id, text: "", color: "kraft", src: null, ...freeSpot(notes.length) }] });
+    setEditId(id);
+  };
+
+  const importVerbatims = () => {
+    const done = new Set(notes.map((n) => n.src).filter(Boolean));
+    const fresh = (state.interviews || [])
+      .filter((i) => i.verbatim && i.verbatim.trim() && !done.has(i.id))
+      .map((i, k) => ({
+        id: rid("nt"),
+        text: i.verbatim.trim(),
+        color: "kraft",
+        src: i.id,
+        srcName: i.person || "",
+        ...freeSpot(notes.length + k),
+      }));
+    if (fresh.length) upd({ notes: [...notes, ...fresh] });
+  };
+
+  const pendingCount = (() => {
+    const done = new Set(notes.map((n) => n.src).filter(Boolean));
+    return (state.interviews || []).filter((i) => i.verbatim && i.verbatim.trim() && !done.has(i.id)).length;
+  })();
+
+  const startDrag = (e, kind, obj) => {
+    const rect = canvasRef.current.getBoundingClientRect();
+    const sx = canvasRef.current.scrollLeft, sy = canvasRef.current.scrollTop;
+    dragRef.current = {
+      kind, id: obj.id,
+      offX: e.clientX - rect.left - obj.x + sx,
+      offY: e.clientY - rect.top - obj.y + sy,
+      w0: obj.w, h0: obj.h,
+      startX: e.clientX, startY: e.clientY,
+      moved: false, sx: e.clientX, sy: e.clientY,
+    };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+  };
+
+  const onPointerDown = (e, n) => {
+    if (editId === n.id) return;
+    e.stopPropagation();
+    startDrag(e, "note", n);
+  };
+
+  const onPointerMove = (e) => {
+    const d = dragRef.current;
+    if (!d) return;
+    if (!d.moved && Math.abs(e.clientX - d.sx) < 4 && Math.abs(e.clientY - d.sy) < 4) return;
+    d.moved = true;
+    const rect = canvasRef.current.getBoundingClientRect();
+    if (d.kind === "resize") {
+      setDrag({ kind: "resize", id: d.id, w: Math.max(160, d.w0 + (e.clientX - d.startX)), h: Math.max(120, d.h0 + (e.clientY - d.startY)) });
+      return;
+    }
+    const x = Math.max(0, e.clientX - rect.left - d.offX + canvasRef.current.scrollLeft);
+    const y = Math.max(0, e.clientY - rect.top - d.offY + canvasRef.current.scrollTop);
+    setDrag({ kind: d.kind, id: d.id, x, y });
+  };
+
+  const onPointerUp = () => {
+    const d = dragRef.current;
+    if (!d) return;
+    if (d.moved && drag) {
+      if (d.kind === "note") patch(d.id, { x: drag.x, y: drag.y });
+      else if (d.kind === "zone") patchZone(d.id, { x: drag.x, y: drag.y });
+      else if (d.kind === "resize") patchZone(d.id, { w: drag.w, h: drag.h });
+    } else if (d.kind === "note") setEditId(d.id);
+    dragRef.current = null;
+    setDrag(null);
+  };
+
+  const bounds = [...notes.map((n) => ({ x: n.x + NOTE_W, y: n.y + NOTE_H })), ...zones.map((z) => ({ x: z.x + z.w, y: z.y + z.h }))]
+    .reduce((a, p) => ({ w: Math.max(a.w, p.x + 40), h: Math.max(a.h, p.y + 40) }), { w: 600, h: 420 });
+
+  return (
+    <div className="aboard">
+      <div className="aboardbar">
+        <span className="rmcount">{notes.length} post-it{notes.length > 1 ? "s" : ""}</span>
+        <div className="aboardactions">
+          {pendingCount > 0 && (
+            <button className="miniaction" onClick={importVerbatims}>↓ Importer {pendingCount} verbatim{pendingCount > 1 ? "s" : ""}</button>
+          )}
+          <button className="miniaction" onClick={addZone}>+ Zone</button>
+          <button className="addrow" onClick={addNote}>+ Post-it</button>
+        </div>
+      </div>
+
+      <div className="alegend">
+        {NOTE_COLORS.map((c) => (
+          <span className="alegitem" key={c.id}><span className="alegdot" style={{ background: c.bg, borderColor: c.pin }} />{c.label}</span>
+        ))}
+        <span className="aleghint">Glisse pour regrouper · clique pour éditer</span>
+      </div>
+
+      <div className="acanvas" ref={canvasRef} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
+        <div className="acanvasinner" style={{ width: bounds.w, height: bounds.h }}>
+          {notes.length === 0 && zones.length === 0 && (
+            <p className="aempty">Board vide. Importe tes verbatims d'interview, ou ajoute un post-it.</p>
+          )}
+
+          {zones.map((z) => {
+            const dp = drag && drag.id === z.id && drag.kind === "zone" ? drag : z;
+            const dz = drag && drag.id === z.id && drag.kind === "resize" ? drag : z;
+            const inside = notesIn(z);
+            const ready = z.label.trim() && inside.length > 0;
+            return (
+              <div className={"azone" + (z.done ? " adone" : "") + (flash === z.id ? " aflash" : "")} key={z.id} style={{ left: dp.x, top: dp.y, width: dz.w, height: dz.h }}>
+                <div className="azonebar" onPointerDown={(e) => { e.stopPropagation(); startDrag(e, "zone", z); }}>
+                  <input
+                    className="azonelabel"
+                    placeholder="Nommer la grappe…"
+                    value={z.label}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onChange={(e) => patchZone(z.id, { label: e.target.value })}
+                  />
+                  <span className="azonecount">{inside.length}</span>
+                  <button className="azonedel" onPointerDown={(e) => e.stopPropagation()} onClick={() => delZone(z.id)} title="Retirer la zone">×</button>
+                </div>
+                <div className="azonefoot" onPointerDown={(e) => e.stopPropagation()}>
+                  {z.done ? (
+                    <span className="azonedone">✓ Problématique créée</span>
+                  ) : (
+                    <button className="azoneconv" disabled={!ready} onClick={() => toProblem(z)} title={ready ? "" : "Nomme la grappe et place des post-its dedans"}>
+                      → Problématique
+                    </button>
+                  )}
+                </div>
+                <span className="azonehandle" onPointerDown={(e) => { e.stopPropagation(); startDrag(e, "resize", z); }} />
+              </div>
+            );
+          })}
+
+          {notes.map((n) => {
+            const pos = drag && drag.id === n.id && drag.kind === "note" ? drag : n;
+            const col = NOTE_COLORS.find((c) => c.id === n.color) || NOTE_COLORS[0];
+            const isEd = editId === n.id;
+            return (
+              <div
+                className={"anote" + (drag && drag.id === n.id && drag.kind === "note" ? " adragging" : "") + (isEd ? " aediting" : "")}
+                key={n.id}
+                style={{ left: pos.x, top: pos.y, background: col.bg, borderColor: col.pin }}
+                onPointerDown={(e) => onPointerDown(e, n)}
+              >
+                {isEd ? (
+                  <div className="anoteedit" onPointerDown={(e) => e.stopPropagation()}>
+                    <textarea autoFocus value={n.text} placeholder="Verbatim…" onChange={(e) => patch(n.id, { text: e.target.value })} />
+                    <div className="anotetools">
+                      {NOTE_COLORS.map((c) => (
+                        <button key={c.id} className={"aswatch" + (n.color === c.id ? " on" : "")} style={{ background: c.bg, borderColor: c.pin }} title={c.label} onClick={() => patch(n.id, { color: c.id })} />
+                      ))}
+                      <button className="anotedel" onClick={() => del(n.id)} title="Supprimer">×</button>
+                      <button className="anoteok" onClick={() => setEditId(null)}>OK</button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p className="anotetext">{n.text || "…"}</p>
+                    {n.srcName && <span className="anotesrc">— {n.srcName}</span>}
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InterviewsView({ state, setInterviews, setAffinity, setDiscovery }) {
+  const [tab, setTab] = useState("liste");
   const interviews = state.interviews || [];
   const segNames = ((state.segper && state.segper.segments) || []).map((s) => s.name).filter(Boolean);
   const add = () =>
@@ -3307,8 +3731,17 @@ function InterviewsView({ state, setInterviews }) {
           <h2>Interviews</h2>
           <p className="ovhelp">Ton suivi de discovery : {counts.done} faites · {counts.planned} planifiées · {counts.todo} à planifier.</p>
         </div>
-        <button className="addbtn" onClick={add}>+ Nouvelle</button>
+        {tab === "liste" && <button className="addbtn" onClick={add}>+ Nouvelle</button>}
       </div>
+
+      <div className="itwtabs">
+        <button className={tab === "liste" ? "on" : ""} onClick={() => setTab("liste")}>Liste</button>
+        <button className={tab === "board" ? "on" : ""} onClick={() => setTab("board")}>Board</button>
+      </div>
+
+      {tab === "board" && <AffinityBoard state={state} setAffinity={setAffinity} setDiscovery={setDiscovery} />}
+      {tab === "liste" && (
+      <>
       <datalist id="itwsegs">
         {segNames.map((n) => <option key={n} value={n} />)}
       </datalist>
@@ -3334,6 +3767,8 @@ function InterviewsView({ state, setInterviews }) {
             </div>
           ))}
         </div>
+      )}
+      </>
       )}
     </div>
   );
@@ -3787,6 +4222,7 @@ function sectionMd(state, k, blocks) {
           const cl = ((dv.clusters || []).find((c) => c.id === p.cluster) || {}).label || "—";
           const prio = (PROB_PRIORITY[p.priorite] || PROB_PRIORITY.nonprio).label;
           md += `- ${p.intitule || "(sans intitulé)"} [${cl} · ${prio}]\n`;
+          (p.verbatims || []).forEach((v) => { md += `  - « ${v.text} »${v.src ? " — " + v.src : ""}\n`; });
         });
         md += `\n`;
       }
@@ -4009,6 +4445,59 @@ textarea:focus,input:focus,select:focus{outline:none;border-color:var(--plum);bo
 .kindtoggle{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;flex:none;}
 .kindtoggle button{border:none;background:transparent;padding:7px 14px;font-size:13px;color:var(--ink-soft);cursor:pointer;transition:.15s;}
 .kindtoggle button.on{background:var(--plum);color:#fff;}
+/* Affinity board */
+.itwtabs{display:flex;gap:6px;margin:14px 0 12px;}
+.itwtabs button{background:transparent;border:1px solid var(--line);border-radius:999px;padding:6px 16px;font-size:13px;color:var(--ink-soft);cursor:pointer;transition:.15s;}
+.itwtabs button.on{background:var(--ink);color:#fff;border-color:var(--ink);}
+.aboard{display:flex;flex-direction:column;gap:8px;}
+.aboardbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;}
+.aboardactions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.alegend{display:flex;gap:14px;align-items:center;flex-wrap:wrap;padding-bottom:2px;}
+.alegitem{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ink-soft);}
+.alegdot{width:11px;height:11px;border-radius:3px;border:1px solid;display:inline-block;}
+.aleghint{font-size:11px;color:var(--stone);font-style:italic;margin-left:auto;}
+.acanvas{position:relative;border:1px solid var(--ink);background:var(--card);background-image:radial-gradient(var(--line) 1px, transparent 1px);background-size:22px 22px;height:64vh;min-height:380px;overflow:auto;touch-action:none;}
+.acanvasinner{position:relative;min-width:100%;min-height:100%;}
+.aempty{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);color:var(--stone);font-style:italic;font-size:13px;text-align:center;width:80%;}
+.anote{position:absolute;width:172px;min-height:116px;border:1px solid;border-radius:3px;padding:10px 11px;box-shadow:2px 3px 8px rgba(13,13,11,.13);cursor:grab;user-select:none;touch-action:none;display:flex;flex-direction:column;gap:4px;transition:box-shadow .12s;}
+.anote:hover{box-shadow:3px 5px 14px rgba(13,13,11,.2);}
+.anote.adragging{cursor:grabbing;box-shadow:6px 10px 24px rgba(13,13,11,.3);z-index:20;transform:rotate(-1.5deg);}
+.anote.aediting{cursor:default;z-index:30;box-shadow:0 8px 26px rgba(13,13,11,.3);}
+.anotetext{margin:0;font-size:12.5px;line-height:1.42;color:var(--ink);white-space:pre-wrap;overflow:hidden;flex:1;}
+.anotesrc{font-size:10px;color:var(--taupe,#8b7355);font-style:italic;opacity:.8;}
+.anoteedit{display:flex;flex-direction:column;gap:6px;height:100%;}
+.anoteedit textarea{width:100%;min-height:66px;border:none;background:rgba(255,255,255,.5);border-radius:3px;padding:5px 6px;font-family:'DM Sans',sans-serif;font-size:12.5px;line-height:1.4;color:var(--ink);resize:none;}
+.anoteedit textarea:focus{outline:1px solid var(--gold);}
+.anotetools{display:flex;gap:3px;align-items:center;}
+.aswatch{width:15px;height:15px;border-radius:3px;border:1px solid;cursor:pointer;padding:0;flex:none;}
+.aswatch.on{outline:1.5px solid var(--ink);outline-offset:1px;}
+.anotedel{margin-left:auto;background:none;border:none;color:var(--danger);font-size:17px;line-height:1;cursor:pointer;padding:0 3px;}
+.anoteok{background:var(--ink);color:#fff;border:none;border-radius:999px;font-size:10px;padding:3px 9px;cursor:pointer;}
+@media (max-width:560px){
+  .acanvas{height:70vh;}
+  .aleghint{margin-left:0;width:100%;}
+  .aboardactions{width:100%;}
+  .aboardactions .miniaction,.aboardactions .addrow{flex:1;}
+}
+.azone{position:absolute;z-index:1;border:1.5px dashed var(--band-line);border-radius:10px;background:rgba(233,221,199,.34);display:flex;flex-direction:column;justify-content:space-between;}
+.azone.adone{border-style:solid;border-color:var(--emerald);background:rgba(45,122,95,.07);}
+.azone.aflash{animation:azf 2.2s ease;}
+@keyframes azf{0%{box-shadow:0 0 0 0 rgba(45,122,95,.5);}100%{box-shadow:0 0 0 14px rgba(45,122,95,0);}}
+.azonebar{display:flex;align-items:center;gap:6px;padding:6px 8px;cursor:grab;touch-action:none;}
+.azonebar:active{cursor:grabbing;}
+.azonelabel{flex:1;min-width:0;background:rgba(253,251,244,.85);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-family:'Cormorant Garamond',serif;font-size:15px;color:var(--ink);}
+.azonecount{font-family:'DM Sans',sans-serif;font-size:10px;color:#fff;background:var(--stone);border-radius:999px;padding:2px 7px;flex:none;}
+.azonedel{background:none;border:none;color:var(--stone);font-size:17px;line-height:1;cursor:pointer;padding:0 2px;flex:none;}
+.azonefoot{padding:6px 8px;display:flex;justify-content:flex-end;}
+.azoneconv{background:var(--ink);color:#fff;border:none;border-radius:999px;font-size:10.5px;letter-spacing:.06em;padding:5px 11px;cursor:pointer;}
+.azoneconv:disabled{opacity:.35;cursor:default;}
+.azonedone{font-size:10.5px;letter-spacing:.06em;color:var(--emerald);background:rgba(253,251,244,.85);border-radius:999px;padding:4px 10px;}
+.azonehandle{position:absolute;right:-1px;bottom:-1px;width:18px;height:18px;cursor:nwse-resize;touch-action:none;background:linear-gradient(135deg,transparent 50%,var(--band-line) 50%);border-radius:0 0 10px 0;}
+.anote{z-index:10;}
+.probvbc{color:var(--emerald);}
+.probvbs{display:flex;flex-direction:column;gap:5px;background:var(--band-faint);border-radius:8px;padding:9px 11px;}
+.probvb{margin:0;font-size:12.5px;line-height:1.45;color:var(--ink);font-style:italic;}
+.probvb span{font-style:normal;color:var(--stone);font-size:11px;}
 /* Export par section */
 .secheadright{display:flex;align-items:center;gap:10px;flex:none;}
 .secexportwrap{position:relative;}
@@ -4021,6 +4510,21 @@ textarea:focus,input:focus,select:focus{outline:none;border-color:var(--plum);bo
 .sxmini{background:none;border:1px solid var(--line);border-radius:999px;padding:4px 10px;font-size:11px;color:var(--ink-soft);cursor:pointer;}
 .sxcopy{flex:1;background:var(--ink);color:#fff;border:none;border-radius:999px;padding:5px 12px;font-size:12px;cursor:pointer;}
 .sxcopy:disabled{opacity:.4;cursor:default;}
+/* Import par section */
+.secimportpop{min-width:300px;max-width:340px;}
+.sximp{width:100%;border:1px solid var(--line);border-radius:8px;padding:7px 8px;font-family:'DM Sans',sans-serif;font-size:12.5px;line-height:1.45;color:var(--ink);background:var(--sand);resize:vertical;}
+.sxfile{display:block;font-size:11px;color:var(--gold-deep);cursor:pointer;}
+.sxfile input{display:none;}
+.sxfile span{border-bottom:1px dotted var(--band-line);}
+.sxmodes{display:flex;gap:5px;}
+.sxmodes button{flex:1;background:none;border:1px solid var(--line);border-radius:999px;padding:4px 8px;font-size:11px;color:var(--ink-soft);cursor:pointer;}
+.sxmodes button.on{background:var(--ink);color:#fff;border-color:var(--ink);}
+.sxcount{font-size:11px;color:var(--stone);flex:1;}
+.sxinto{width:100%;cursor:pointer;}
+.sxitems{display:flex;flex-direction:column;gap:3px;max-height:210px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;padding:6px;background:var(--sand);}
+.sxitem{display:flex;gap:7px;align-items:flex-start;font-size:12px;line-height:1.4;color:var(--ink-soft);cursor:pointer;padding:4px 5px;border-radius:6px;}
+.sxitem.on{background:var(--band-faint);color:var(--ink);}
+.sxitem input{margin-top:2px;flex:none;}
 @media (max-width:560px){
   .secheadright{gap:7px;}
   .secexportpop{right:auto;left:0;min-width:180px;}
