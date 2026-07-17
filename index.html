@@ -1100,7 +1100,12 @@ function App() {
       try { items = await window.inbox.list(); } catch (e) { return; }
       if (!items.length) return;
       const have = new Set((state.meetings || []).map((m) => m.sourceId).filter(Boolean));
-      const fresh = items.filter((it) => it.sourceId && !have.has(String(it.sourceId)));
+      // Un item sans sourceId n'est PAS un doublon : on l'ingère (repli sur l'id du doc).
+      // Le compter comme "déjà présent" le supprimerait en silence.
+      const fresh = items.filter((it) => {
+        const sid = String(it.sourceId || it.__id || "");
+        return !sid || !have.has(sid);
+      });
       if (fresh.length) {
         const rows = fresh.map(inboxToMeeting);
         setState((p) => ({ ...p, meetings: [...rows, ...(p.meetings || [])] }));
@@ -3967,7 +3972,7 @@ function inboxToMeeting(it) {
     actions: norm(it.actions, ["titre", "note"]).map((a) => ({ ...a, done: false })),
     risques: norm(it.risques, ["titre", "corps", "note"]),
     notes: str(it.notes),
-    sourceId: String(it.sourceId || ""),
+    sourceId: String(it.sourceId || it.__id || ""),
     sourceUrl: /^https:\/\//.test(str(it.sourceUrl)) ? str(it.sourceUrl) : "",
     unread: true,
   };
