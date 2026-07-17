@@ -147,6 +147,33 @@ const firebaseConfig = {
     }
   };
 
+  // ---- boîte de réception : n8n dépose, le cockpit ingère ----
+  // n8n n'écrit JAMAIS dans cockpit/{uid} — un seul écrivain sur l'état.
+  window.inbox = {
+    get enabled() { return hasConfig && !READONLY && !!uid(); },
+    list: async function () {
+      if (!hasConfig || READONLY) return [];
+      await authReady;
+      var u = uid();
+      if (!u) return [];
+      try {
+        var snap = await db.collection("cockpit_inbox").doc(u).collection("items").limit(20).get();
+        var out = [];
+        snap.forEach(function (d) { var v = d.data() || {}; v.__id = d.id; out.push(v); });
+        return out;
+      } catch (e) { console.error("Inbox list:", e); return []; }
+    },
+    remove: async function (id) {
+      if (!hasConfig || READONLY) return false;
+      var u = uid();
+      if (!u || !id) return false;
+      try {
+        await db.collection("cockpit_inbox").doc(u).collection("items").doc(id).delete();
+        return true;
+      } catch (e) { console.error("Inbox remove:", e); return false; }
+    }
+  };
+
   // ---- mode lecture seule ----
   function showReadMsg(title, msg) {
     var r = document.getElementById("root");
@@ -1062,6 +1089,28 @@ function App() {
     return () => saveTimer.current && clearTimeout(saveTimer.current);
   }, [state]);
 
+  const inboxDone = useRef(false);
+  const [inboxMsg, setInboxMsg] = useState(null);
+  useEffect(() => {
+    if (!state || !loaded.current || inboxDone.current) return;
+    inboxDone.current = true;
+    (async () => {
+      if (!window.inbox || !window.inbox.enabled) return;
+      let items = [];
+      try { items = await window.inbox.list(); } catch (e) { return; }
+      if (!items.length) return;
+      const have = new Set((state.meetings || []).map((m) => m.sourceId).filter(Boolean));
+      const fresh = items.filter((it) => it.sourceId && !have.has(String(it.sourceId)));
+      if (fresh.length) {
+        const rows = fresh.map(inboxToMeeting);
+        setState((p) => ({ ...p, meetings: [...rows, ...(p.meetings || [])] }));
+      }
+      let removed = 0;
+      for (const it of items) { if (await window.inbox.remove(it.__id)) removed++; }
+      setInboxMsg({ n: fresh.length, dup: items.length - fresh.length, removed });
+    })();
+  }, [state]);
+
   if (!state) {
     return (
       <div className="com-root loading">
@@ -1233,7 +1282,7 @@ function App() {
           ) : active === "journal" ? (
             <JournalView state={state} addJournal={addJournal} delJournal={delJournal} />
           ) : active === "meetings" ? (
-            <MeetingsView state={state} setMeetings={setMeetings} />
+            <MeetingsView state={state} setMeetings={setMeetings} inboxMsg={inboxMsg} clearInbox={() => setInboxMsg(null)} />
           ) : active === "interviews" ? (
             <InterviewsView state={state} setInterviews={setInterviews} setAffinity={setAffinity} setDiscovery={setDiscovery} />
           ) : active === "resources" ? (
@@ -3894,6 +3943,36 @@ function NotesEditor({ value, onChange, rows = 5, placeholder, variant = "note" 
 }
 
 /* ---------------- One to One : rendu éditorial ---------------- */
+
+// Un item de boîte de réception vient d'une automatisation : on ne lui fait pas
+// confiance. On ne garde que des chaînes, sur des clés connues. Rien d'autre n'entre.
+function inboxToMeeting(it) {
+  const str = (v) => (typeof v === "string" ? v : "");
+  const norm = (rows, keys) =>
+    (Array.isArray(rows) ? rows : []).slice(0, 30).map((r) => {
+      const o = { id: rid("oto") };
+      keys.forEach((k) => { o[k] = str(r && r[k]); });
+      return o;
+    });
+  const ts = Date.now();
+  return {
+    id: ts + Math.floor(Math.random() * 1000),
+    ts,
+    date: str(it.date) || formatDateShort(ts),
+    title: str(it.title) || "Compte-rendu importé",
+    kind: it.kind === "atelier" ? "atelier" : "1to1",
+    themes: (Array.isArray(it.themes) ? it.themes : []).filter((t) => typeof t === "string").slice(0, 10),
+    epistemic: str(it.epistemic),
+    arbitrages: norm(it.arbitrages, ["titre", "corps", "analyse", "question"]),
+    actions: norm(it.actions, ["titre", "note"]).map((a) => ({ ...a, done: false })),
+    risques: norm(it.risques, ["titre", "corps", "note"]),
+    notes: str(it.notes),
+    sourceId: String(it.sourceId || ""),
+    sourceUrl: /^https:\/\//.test(str(it.sourceUrl)) ? str(it.sourceUrl) : "",
+    unread: true,
+  };
+}
+
 function otoHas(m) {
   return (
     ((m.arbitrages || []).length + (m.actions || []).length + (m.risques || []).length) > 0 ||
@@ -3913,7 +3992,7 @@ function OtoBlock({ title, count, children }) {
   );
 }
 
-function OneToOnePreview({ m }) {
+function OneToOnePreview({ m, onRead }) {
   const arb = m.arbitrages || [];
   const act = m.actions || [];
   const ris = m.risques || [];
@@ -3930,8 +4009,24 @@ function OneToOnePreview({ m }) {
           <div className="otoeyebrow">{isOto ? "Compte-rendu · One to One" : "Atelier"}</div>
           <div className="ototitle">{m.title || "Sans titre"}</div>
         </div>
-        <div className="otometa">{m.date}</div>
+        <div className="otometa">
+          {m.date}
+          {m.sourceUrl && (
+            <>
+              <br />
+              <a href={m.sourceUrl} target="_blank" rel="noreferrer">Verbatim dans Notion →</a>
+            </>
+          )}
+        </div>
       </div>
+
+      {m.unread && (
+        <div className="otounread">
+          <span className="otobadge unread">Non relu</span>
+          <span className="otounreadtxt">Rempli automatiquement. Personne ne l'a encore relu — ne t'appuie pas dessus tel quel.</span>
+          {onRead && <button className="miniaction" onClick={onRead}>Marquer relu</button>}
+        </div>
+      )}
 
       {epi && (
         <div className="otoepi">
@@ -4040,7 +4135,7 @@ function OtoRows({ label, help, rows, fields, onChange, addLabel, withDone }) {
   );
 }
 
-function MeetingsView({ state, setMeetings }) {
+function MeetingsView({ state, setMeetings, inboxMsg, clearInbox }) {
   const meetings = state.meetings || [];
   const [openId, setOpenId] = useState(null);
   const [edit, setEdit] = useState(false);
@@ -4084,7 +4179,7 @@ function MeetingsView({ state, setMeetings }) {
           </div>
         </div>
         {!edit ? (
-          <OneToOnePreview m={current} />
+          <OneToOnePreview m={current} onRead={() => upd(current.id, { unread: false })} />
         ) : (
         <div className="pageedit">
           <input className="pagetitle" placeholder="Titre de la page (atelier, réunion…)" value={current.title} onChange={(e) => upd(current.id, { title: e.target.value })} />
@@ -4187,6 +4282,18 @@ function MeetingsView({ state, setMeetings }) {
         </div>
         <button className="addbtn" onClick={add}>+ Nouvelle page</button>
       </div>
+      {inboxMsg && (inboxMsg.n > 0 || inboxMsg.dup > 0) && (
+        <div className="inboxbanner">
+          <div className="inboxtxt">
+            {inboxMsg.n > 0 && (
+              <strong>{inboxMsg.n === 1 ? "1 compte-rendu importé automatiquement" : inboxMsg.n + " comptes-rendus importés automatiquement"}</strong>
+            )}
+            {inboxMsg.n > 0 && <span> — en haut de la liste, badgé « Non relu ».</span>}
+            {inboxMsg.dup > 0 && <span className="inboxdup">{inboxMsg.dup} déjà présent{inboxMsg.dup > 1 ? "s" : ""}, ignoré{inboxMsg.dup > 1 ? "s" : ""}.</span>}
+          </div>
+          <button className="miniaction" onClick={clearInbox}>OK</button>
+        </div>
+      )}
       {allThemes.length > 0 && (
         <div className="themefilter">
           <button className={"tfchip" + (filterTheme === null ? " on" : "")} onClick={() => setFilterTheme(null)}>Toutes</button>
@@ -4203,6 +4310,7 @@ function MeetingsView({ state, setMeetings }) {
             <button className="pagerow" key={m.id} onClick={() => open(m.id)}>
               <span className="pagerowtitle">
                 {m.kind === "1to1" && <span className="otobadge oto">1:1</span>}
+                {m.unread && <span className="otobadge unread">Non relu</span>}
                 {m.title || "Sans titre"}
               </span>
               <span className="pagerowmeta">
@@ -5272,6 +5380,15 @@ input.fname{flex:1;font-weight:500;}
 .otobadge.arb{border-color:var(--gold);color:var(--gold-deep);}
 .otobadge.ris{background:var(--ink);border-color:var(--ink);color:var(--band-line);}
 .otobadge.oto{border-color:var(--gold);color:var(--gold-deep);margin-right:8px;}
+.otobadge.unread{background:var(--gold);border-color:var(--gold);color:#fff;margin-right:8px;}
+.otounread{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 28px;background:var(--band-faint);border-bottom:1px solid var(--band-line);}
+.otounreadtxt{flex:1;min-width:180px;font-size:12px;color:var(--ink-soft);line-height:1.5;}
+.inboxbanner{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:12px 16px;margin-bottom:12px;border:1px solid var(--gold);border-radius:10px;background:var(--band-faint);}
+.inboxtxt{flex:1;min-width:200px;font-size:13px;line-height:1.6;color:var(--ink);}
+.inboxtxt strong{font-weight:500;}
+.inboxdup{display:block;color:var(--stone);font-size:11.5px;margin-top:2px;}
+.otometa a{color:var(--gold-deep);text-decoration:none;}
+.otometa a:hover{text-decoration:underline;}
 .otoitembody p{margin:0 0 6px;font-size:13px;line-height:1.75;}
 .otoitembody ul,.otoitemsrc ul{margin:4px 0 4px 16px;}
 .otoitemsrc{margin-top:9px;padding-left:11px;border-left:1px solid var(--band-line);}
