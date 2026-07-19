@@ -1106,20 +1106,29 @@ function App() {
       let items = [];
       try { items = await window.inbox.list(); } catch (e) { return; }
       if (!items.length) return;
-      const have = new Set((state.meetings || []).map((m) => m.sourceId).filter(Boolean));
+      // Anti-doublon : un sourceId déjà vu côté réunions OU interviews ne re-rentre pas.
+      const haveMeet = new Set((state.meetings || []).map((m) => m.sourceId).filter(Boolean));
+      const haveItw = new Set((state.interviews || []).map((i) => i.sourceId).filter(Boolean));
       // Un item sans sourceId n'est PAS un doublon : on l'ingère (repli sur l'id du doc).
       // Le compter comme "déjà présent" le supprimerait en silence.
       const fresh = items.filter((it) => {
         const sid = String(it.sourceId || it.__id || "");
-        return !sid || !have.has(sid);
+        if (!sid) return true;
+        return !haveMeet.has(sid) && !haveItw.has(sid);
       });
-      if (fresh.length) {
-        const rows = fresh.map(inboxToMeeting);
-        setState((p) => ({ ...p, meetings: [...rows, ...(p.meetings || [])] }));
+      // Aiguillage par type : les interviews vont dans state.interviews, le reste dans meetings.
+      const itwRows = fresh.filter((it) => it.type === "interview").map(inboxToInterview);
+      const meetRows = fresh.filter((it) => it.type !== "interview").map(inboxToMeeting);
+      if (itwRows.length || meetRows.length) {
+        setState((p) => ({
+          ...p,
+          meetings: [...meetRows, ...(p.meetings || [])],
+          interviews: [...itwRows, ...(p.interviews || [])],
+        }));
       }
       let removed = 0;
       for (const it of items) { if (await window.inbox.remove(it.__id)) removed++; }
-      setInboxMsg({ n: fresh.length, dup: items.length - fresh.length, removed });
+      setInboxMsg({ n: meetRows.length, itw: itwRows.length, dup: items.length - fresh.length, removed });
     })();
   }, [state]);
 
@@ -3854,15 +3863,70 @@ function AffinityBoard({ state, setAffinity, setDiscovery }) {
 
 function InterviewsView({ state, setInterviews, setAffinity, setDiscovery }) {
   const [tab, setTab] = useState("liste");
+  const [crOpenId, setCrOpenId] = useState(null);
   const interviews = state.interviews || [];
   const segNames = ((state.segper && state.segper.segments) || []).map((s) => s.name).filter(Boolean);
-  const add = () =>
-    setInterviews([{ id: Date.now(), ts: Date.now(), date: formatDateShort(Date.now()), person: "", segment: "", status: "todo", learnings: "", verbatim: "" }, ...interviews]);
+  const blankItw = (status) => ({ id: Date.now(), ts: Date.now(), date: formatDateShort(Date.now()), person: "", segment: "", status, learnings: "", verbatim: "", report: "", sourceUrl: "", unread: false });
+  const add = () => setInterviews([blankItw("todo"), ...interviews]);
+  const addCR = () => { const m = blankItw("done"); setInterviews([m, ...interviews]); setCrOpenId(m.id); };
   const upd = (id, p) => setInterviews(interviews.map((m) => (m.id === id ? { ...m, ...p } : m)));
   const del = (id) => setInterviews(interviews.filter((m) => m.id !== id));
+  const closeCR = () => {
+    const m = interviews.find((x) => x.id === crOpenId);
+    const empty = m && !["report", "person", "learnings", "verbatim", "sourceUrl"].some((k) => String(m[k] || "").trim());
+    if (empty) del(m.id);
+    setCrOpenId(null);
+  };
 
   const counts = { todo: 0, planned: 0, done: 0 };
   interviews.forEach((i) => counts[i.status] !== undefined && counts[i.status]++);
+  const crList = interviews.filter((i) => i.report && String(i.report).trim());
+  const current = interviews.find((m) => m.id === crOpenId);
+
+  // Fiche d'un compte-rendu (calquée sur Réunions & ateliers)
+  if (current) {
+    return (
+      <div className="section">
+        <div className="sechead">
+          <div>
+            <button className="miniaction crback" onClick={closeCR}>← Retour aux interviews</button>
+            <h2 className="crdetailtitle">{current.person || "Compte-rendu"}</h2>
+            <p className="ovhelp">{current.date}{current.segment ? " · " + current.segment : ""}</p>
+          </div>
+          <button className="ghostdel" onClick={() => del(current.id)}>Supprimer</button>
+        </div>
+        <datalist id="itwsegs">{segNames.map((n) => <option key={n} value={n} />)}</datalist>
+        {current.unread && (
+          <div className="itwunread">
+            <span className="otobadge unread">Non relu</span>
+            <span className="itwunreadtxt">Résumé Notion importé automatiquement. Personne ne l'a encore relu.</span>
+            <button className="miniaction" onClick={() => upd(current.id, { unread: false })}>Marquer comme relu</button>
+          </div>
+        )}
+        <div className={"itwcard itw-" + (current.status || "todo")}>
+          <div className="itwtop">
+            <input className="itwdate" placeholder="Date" value={current.date} onChange={(e) => upd(current.id, { date: e.target.value })} />
+            <input className="itwperson" placeholder="Personne (nom, rôle)" value={current.person} onChange={(e) => upd(current.id, { person: e.target.value })} />
+            <input className="itwseg" list="itwsegs" placeholder="Segment" value={current.segment} onChange={(e) => upd(current.id, { segment: e.target.value })} />
+            <select className="itwstatus" value={current.status} onChange={(e) => upd(current.id, { status: e.target.value })}>
+              {INTERVIEW_STATUS.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
+            </select>
+          </div>
+          <label className="perlbl">Compte-rendu</label>
+          <NotesEditor value={current.report} onChange={(v) => upd(current.id, { report: v })} rows={6} placeholder="Compte-rendu de l'entretien… (## Titre, **gras**, - puce)" variant="note" />
+          <label className="perlbl">Lien Notion</label>
+          <input className="itwsrc" placeholder="https://notion.so/…" value={current.sourceUrl || ""} onChange={(e) => upd(current.id, { sourceUrl: e.target.value })} />
+          {/^https:\/\//.test(current.sourceUrl || "") && (
+            <a className="itwsource" href={current.sourceUrl} target="_blank" rel="noopener noreferrer">Ouvrir dans Notion →</a>
+          )}
+          <label className="perlbl">Apprentissages</label>
+          <textarea rows={3} placeholder="Ce que tu as appris…" value={current.learnings} onChange={(e) => upd(current.id, { learnings: e.target.value })} />
+          <label className="perlbl">Verbatim</label>
+          <input placeholder="« citation clé… »" value={current.verbatim} onChange={(e) => upd(current.id, { verbatim: e.target.value })} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="section">
@@ -3871,7 +3935,6 @@ function InterviewsView({ state, setInterviews, setAffinity, setDiscovery }) {
           <h2>Interviews</h2>
           <p className="ovhelp">Ton suivi de discovery : {counts.done} faites · {counts.planned} planifiées · {counts.todo} à planifier.</p>
         </div>
-        {tab === "liste" && <button className="addbtn" onClick={add}>+ Nouvelle</button>}
       </div>
 
       <div className="itwtabs">
@@ -3885,13 +3948,21 @@ function InterviewsView({ state, setInterviews, setAffinity, setDiscovery }) {
       <datalist id="itwsegs">
         {segNames.map((n) => <option key={n} value={n} />)}
       </datalist>
-      {interviews.length === 0 ? (
-        <p className="empty">Aucune interview pour l'instant. Clique « + Nouvelle » pour en planifier une.</p>
-      ) : (
-        <div className="itwlist">
-          {interviews.map((m) => (
-            <div className={"itwcard itw-" + (m.status || "todo")} key={m.id}>
-              <div className="itwtop">
+
+      <div className="itwblock">
+        <div className="blockhead">
+          <div>
+            <h3>Suivi des interviews</h3>
+            <p className="blocksub">Qui, quand, quel statut. Le pipeline.</p>
+          </div>
+          <button className="addbtn" onClick={add}>+ Nouvelle</button>
+        </div>
+        {interviews.length === 0 ? (
+          <p className="empty">Aucune interview pour l'instant. Clique « + Nouvelle » pour en planifier une.</p>
+        ) : (
+          <div className="itwlist">
+            {interviews.map((m) => (
+              <div className={"suivirow itw-" + (m.status || "todo")} key={m.id}>
                 <input className="itwdate" placeholder="Date" value={m.date} onChange={(e) => upd(m.id, { date: e.target.value })} />
                 <input className="itwperson" placeholder="Personne (nom, rôle)" value={m.person} onChange={(e) => upd(m.id, { person: e.target.value })} />
                 <input className="itwseg" list="itwsegs" placeholder="Segment" value={m.segment} onChange={(e) => upd(m.id, { segment: e.target.value })} />
@@ -3900,14 +3971,34 @@ function InterviewsView({ state, setInterviews, setAffinity, setDiscovery }) {
                 </select>
                 <button className="del" onClick={() => del(m.id)} aria-label="Supprimer">×</button>
               </div>
-              <label className="perlbl">Apprentissages</label>
-              <textarea rows={3} placeholder="Ce que tu as appris…" value={m.learnings} onChange={(e) => upd(m.id, { learnings: e.target.value })} />
-              <label className="perlbl">Verbatim</label>
-              <input placeholder="« citation clé… »" value={m.verbatim} onChange={(e) => upd(m.id, { verbatim: e.target.value })} />
-            </div>
-          ))}
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="itwblock">
+        <div className="blockhead">
+          <div>
+            <h3>Compte-rendu</h3>
+            <p className="blocksub">Les écrits, comme Réunions &amp; ateliers. Clique pour ouvrir.</p>
+          </div>
+          <button className="plusbtn" onClick={addCR} title="Ajouter un compte-rendu" aria-label="Ajouter un compte-rendu">+</button>
         </div>
-      )}
+        {crList.length === 0 ? (
+          <p className="empty">Aucun compte-rendu. Clique « + » pour en écrire un, ou attends l'import n8n.</p>
+        ) : (
+          <div className="crlist">
+            {crList.map((m) => (
+              <button className="crrow" key={m.id} onClick={() => setCrOpenId(m.id)}>
+                <span className="crtitle">{m.person || "Sans nom"}</span>
+                {m.unread && <span className="otobadge unread">Non relu</span>}
+                <span className="crdate">{m.date}</span>
+                <span className="crarrow">→</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
       </>
       )}
     </div>
@@ -4012,6 +4103,38 @@ function inboxToMeeting(it) {
     notes: str(it.notes),
     sourceId: String(it.sourceId || it.__id || ""),
     sourceUrl: /^https:\/\//.test(str(it.sourceUrl)) ? str(it.sourceUrl) : "",
+    unread: true,
+  };
+}
+
+// Nettoie le résumé Notion (recopié tel quel) pour l'affichage : retire les
+// renvois [^https://…] et transforme les cases - [ ] en puces. Pas de LLM, juste des regex.
+function cleanReport(src) {
+  return String(src || "")
+    .replace(/\s*\[\^[^\]]*\]/g, "")
+    .replace(/^(\s*)[-*]\s+\[[ xX]\]\s+/gm, "$1- ")
+    .replace(/[ \t]+$/gm, "")
+    .trim();
+}
+
+// Même défense que inboxToMeeting : une automatisation n'est pas fiable.
+// Seules les clés connues, seulement des chaînes, sourceUrl forcé en https://.
+function inboxToInterview(it) {
+  const str = (v) => (typeof v === "string" ? v : "");
+  const st = ["todo", "planned", "done"].includes(it.status) ? it.status : "done";
+  const ts = typeof it.ts === "number" ? it.ts : Date.now();
+  return {
+    id: ts + Math.floor(Math.random() * 1000),
+    ts,
+    date: str(it.date) || formatDateShort(ts),
+    person: str(it.person),
+    segment: str(it.segment),
+    status: st,
+    learnings: str(it.learnings),
+    verbatim: str(it.verbatim),
+    report: cleanReport(str(it.report)),
+    sourceUrl: /^https:\/\//.test(str(it.sourceUrl)) ? str(it.sourceUrl) : "",
+    sourceId: String(it.sourceId || it.__id || ""),
     unread: true,
   };
 }
@@ -4325,13 +4448,14 @@ function MeetingsView({ state, setMeetings, inboxMsg, clearInbox }) {
         </div>
         <button className="addbtn" onClick={add}>+ Nouvelle page</button>
       </div>
-      {inboxMsg && (inboxMsg.n > 0 || inboxMsg.dup > 0) && (
+      {inboxMsg && (inboxMsg.n > 0 || inboxMsg.itw > 0 || inboxMsg.dup > 0) && (
         <div className="inboxbanner">
           <div className="inboxtxt">
             {inboxMsg.n > 0 && (
               <strong>{inboxMsg.n === 1 ? "1 compte-rendu importé automatiquement" : inboxMsg.n + " comptes-rendus importés automatiquement"}</strong>
             )}
             {inboxMsg.n > 0 && <span> — en haut de la liste, badgé « Non relu ».</span>}
+            {inboxMsg.itw > 0 && <span className="inboxdup">{inboxMsg.itw === 1 ? "1 interview importée" : inboxMsg.itw + " interviews importées"}, à retrouver dans l'onglet Interviews.</span>}
             {inboxMsg.dup > 0 && <span className="inboxdup">{inboxMsg.dup} déjà présent{inboxMsg.dup > 1 ? "s" : ""}, ignoré{inboxMsg.dup > 1 ? "s" : ""}.</span>}
           </div>
           <button className="miniaction" onClick={clearInbox}>OK</button>
@@ -5544,6 +5668,26 @@ input.fname{flex:1;font-weight:500;}
 .itwseg{flex:1;min-width:110px;}
 .itwstatus{width:120px;flex:none;cursor:pointer;}
 @media (max-width:560px){ .itwtop input,.itwtop select{flex-basis:100%;width:100%;} }
+.itwunread{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 10px;margin-bottom:8px;background:var(--band-faint);border:1px solid var(--band-line);border-radius:8px;}
+.itwunreadtxt{flex:1;min-width:160px;font-size:12px;color:var(--ink-soft);line-height:1.5;}
+.itwsrc{width:100%;font-size:12px;color:var(--ink-soft);}
+.itwblock{margin-bottom:26px;}
+.blocksub{font-size:11px;color:var(--stone);margin:3px 0 0;font-weight:300;}
+.suivirow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--card);border:1px solid var(--line);border-left:3px solid var(--band-line);border-radius:0 10px 10px 0;padding:8px 12px;}
+.suivirow.itw-planned{border-left-color:var(--gold);}
+.suivirow.itw-done{border-left-color:var(--emerald);}
+.plusbtn{background:var(--ink);color:#fff;border:none;border-radius:50%;width:30px;height:30px;flex:none;font-size:17px;line-height:1;cursor:pointer;transition:.15s;}
+.plusbtn:hover{background:var(--gold-deep);}
+.crlist{display:flex;flex-direction:column;gap:8px;}
+.crrow{display:flex;gap:10px;align-items:center;width:100%;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:11px;padding:12px 14px;cursor:pointer;transition:.12s;font-family:'DM Sans',sans-serif;}
+.crrow:hover{border-color:var(--gold);box-shadow:0 2px 10px rgba(13,13,11,.06);}
+.crtitle{font-family:'Cormorant Garamond',serif;font-size:17px;font-weight:600;color:var(--ink);flex:1;}
+.crdate{font-size:12px;color:var(--stone);}
+.crarrow{color:var(--gold-deep);font-size:14px;}
+.crback{margin-bottom:10px;}
+.crdetailtitle{margin:0;}
+.itwsource{display:inline-block;font-size:12px;color:var(--gold-deep);text-decoration:none;margin:4px 0 8px;border-bottom:1px solid var(--band-line);padding-bottom:1px;}
+.itwsource:hover{border-bottom-color:var(--gold);}
 
 /* overview */
 .overview{animation:rise .3s ease;}
