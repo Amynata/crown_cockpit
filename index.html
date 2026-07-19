@@ -3864,6 +3864,12 @@ function AffinityBoard({ state, setAffinity, setDiscovery }) {
 function InterviewsView({ state, setInterviews, setAffinity, setDiscovery }) {
   const [tab, setTab] = useState("liste");
   const [crOpenId, setCrOpenId] = useState(null);
+  const [crEdit, setCrEdit] = useState(false);
+  useEffect(() => {
+    if (crOpenId == null) return;
+    const m = (state.interviews || []).find((x) => x.id === crOpenId);
+    setCrEdit(!(m && String(m.report || "").trim()));
+  }, [crOpenId]);
   const interviews = state.interviews || [];
   const segNames = ((state.segper && state.segper.segments) || []).map((s) => s.name).filter(Boolean);
   const blankItw = (status) => ({ id: Date.now(), ts: Date.now(), date: formatDateShort(Date.now()), person: "", segment: "", status, learnings: "", verbatim: "", report: "", sourceUrl: "", unread: false });
@@ -3885,6 +3891,8 @@ function InterviewsView({ state, setInterviews, setAffinity, setDiscovery }) {
 
   // Fiche d'un compte-rendu (calquée sur Réunions & ateliers)
   if (current) {
+    const statusLabel = (INTERVIEW_STATUS.find((s) => s.code === current.status) || {}).label;
+    const hasAny = ["report", "verbatim", "learnings", "sourceUrl"].some((k) => String(current[k] || "").trim());
     return (
       <div className="section">
         <div className="sechead">
@@ -3893,37 +3901,103 @@ function InterviewsView({ state, setInterviews, setAffinity, setDiscovery }) {
             <h2 className="crdetailtitle">{current.person || "Compte-rendu"}</h2>
             <p className="ovhelp">{current.date}{current.segment ? " · " + current.segment : ""}</p>
           </div>
-          <button className="ghostdel" onClick={() => del(current.id)}>Supprimer</button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button className={"rmedit" + (crEdit ? " on" : "")} onClick={() => setCrEdit((e) => !e)}>{crEdit ? "Aperçu" : "Éditer"}</button>
+            <button className="ghostdel" onClick={() => del(current.id)}>Supprimer</button>
+          </div>
         </div>
         <datalist id="itwsegs">{segNames.map((n) => <option key={n} value={n} />)}</datalist>
-        {current.unread && (
-          <div className="itwunread">
-            <span className="otobadge unread">Non relu</span>
-            <span className="itwunreadtxt">Résumé Notion importé automatiquement. Personne ne l'a encore relu.</span>
-            <button className="miniaction" onClick={() => upd(current.id, { unread: false })}>Marquer comme relu</button>
+
+        {crEdit ? (
+          <>
+            {current.unread && (
+              <div className="itwunread">
+                <span className="otobadge unread">Non relu</span>
+                <span className="itwunreadtxt">Résumé Notion importé automatiquement. Personne ne l'a encore relu.</span>
+                <button className="miniaction" onClick={() => upd(current.id, { unread: false })}>Marquer comme relu</button>
+              </div>
+            )}
+            <div className={"itwcard itw-" + (current.status || "todo")}>
+              <div className="itwtop">
+                <input className="itwdate" placeholder="Date" value={current.date} onChange={(e) => upd(current.id, { date: e.target.value })} />
+                <input className="itwperson" placeholder="Personne (nom, rôle)" value={current.person} onChange={(e) => upd(current.id, { person: e.target.value })} />
+                <input className="itwseg" list="itwsegs" placeholder="Segment" value={current.segment} onChange={(e) => upd(current.id, { segment: e.target.value })} />
+                <select className="itwstatus" value={current.status} onChange={(e) => upd(current.id, { status: e.target.value })}>
+                  {INTERVIEW_STATUS.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
+                </select>
+              </div>
+              <label className="perlbl">Compte-rendu</label>
+              <NotesEditor value={current.report} onChange={(v) => upd(current.id, { report: v })} rows={6} placeholder="Compte-rendu de l'entretien… (## Titre, **gras**, - puce)" variant="note" />
+              <label className="perlbl">Lien Notion</label>
+              <input className="itwsrc" placeholder="https://notion.so/…" value={current.sourceUrl || ""} onChange={(e) => upd(current.id, { sourceUrl: e.target.value })} />
+              {/^https:\/\//.test(current.sourceUrl || "") && (
+                <a className="itwsource" href={current.sourceUrl} target="_blank" rel="noopener noreferrer">Ouvrir dans Notion →</a>
+              )}
+              <label className="perlbl">Apprentissages</label>
+              <textarea rows={3} placeholder="Ce que tu as appris…" value={current.learnings} onChange={(e) => upd(current.id, { learnings: e.target.value })} />
+              <label className="perlbl">Verbatim</label>
+              <input placeholder="« citation clé… »" value={current.verbatim} onChange={(e) => upd(current.id, { verbatim: e.target.value })} />
+            </div>
+          </>
+        ) : !hasAny ? (
+          <p className="empty">Rien à afficher. Clique « Éditer » pour remplir cette fiche.</p>
+        ) : (
+          <div className="otoprev">
+            <div className="otohead">
+              <div>
+                <div className="otoeyebrow">Compte-rendu · Interview</div>
+                <div className="ototitle">
+                  {current.person || "Compte-rendu"}
+                  {statusLabel && <span className="otobadge" style={{ marginLeft: 10 }}>{statusLabel}</span>}
+                </div>
+              </div>
+              <div className="otometa">{current.date}{current.segment ? " · " + current.segment : ""}</div>
+            </div>
+
+            {current.unread && (
+              <div className="otounread">
+                <span className="otobadge unread">Non relu</span>
+                <span className="otounreadtxt">Résumé Notion importé automatiquement. Personne ne l'a encore relu.</span>
+                <button className="miniaction" onClick={() => upd(current.id, { unread: false })}>Marquer relu</button>
+              </div>
+            )}
+
+            {String(current.report || "").trim() && (
+              <OtoBlock title="Compte-rendu">
+                <div className="otonotes" dangerouslySetInnerHTML={{ __html: mdToHtml(current.report) }} />
+              </OtoBlock>
+            )}
+
+            {String(current.verbatim || "").trim() && (
+              <OtoBlock title="Verbatim">
+                <div className="otoq">{current.verbatim}</div>
+              </OtoBlock>
+            )}
+
+            {String(current.learnings || "").trim() && (
+              <OtoBlock title="Apprentissages">
+                <div className="otoitem">
+                  <div className="otoitemtop">
+                    <span className="otobadge learn">Apprentissage</span>
+                  </div>
+                  <div className="otoitembody" dangerouslySetInnerHTML={{ __html: mdToHtml(current.learnings) }} />
+                </div>
+              </OtoBlock>
+            )}
+
+            {/^https:\/\//.test(current.sourceUrl || "") && (
+              <OtoBlock title="Source">
+                <div className="resline">
+                  <div className="restxt">
+                    <span className="reslabel">Compte-rendu — Notion</span>
+                    <span className="resnote">Résumé importé automatiquement</span>
+                  </div>
+                  <a className="resdom" href={current.sourceUrl} target="_blank" rel="noopener noreferrer">→ Notion</a>
+                </div>
+              </OtoBlock>
+            )}
           </div>
         )}
-        <div className={"itwcard itw-" + (current.status || "todo")}>
-          <div className="itwtop">
-            <input className="itwdate" placeholder="Date" value={current.date} onChange={(e) => upd(current.id, { date: e.target.value })} />
-            <input className="itwperson" placeholder="Personne (nom, rôle)" value={current.person} onChange={(e) => upd(current.id, { person: e.target.value })} />
-            <input className="itwseg" list="itwsegs" placeholder="Segment" value={current.segment} onChange={(e) => upd(current.id, { segment: e.target.value })} />
-            <select className="itwstatus" value={current.status} onChange={(e) => upd(current.id, { status: e.target.value })}>
-              {INTERVIEW_STATUS.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
-            </select>
-          </div>
-          <label className="perlbl">Compte-rendu</label>
-          <NotesEditor value={current.report} onChange={(v) => upd(current.id, { report: v })} rows={6} placeholder="Compte-rendu de l'entretien… (## Titre, **gras**, - puce)" variant="note" />
-          <label className="perlbl">Lien Notion</label>
-          <input className="itwsrc" placeholder="https://notion.so/…" value={current.sourceUrl || ""} onChange={(e) => upd(current.id, { sourceUrl: e.target.value })} />
-          {/^https:\/\//.test(current.sourceUrl || "") && (
-            <a className="itwsource" href={current.sourceUrl} target="_blank" rel="noopener noreferrer">Ouvrir dans Notion →</a>
-          )}
-          <label className="perlbl">Apprentissages</label>
-          <textarea rows={3} placeholder="Ce que tu as appris…" value={current.learnings} onChange={(e) => upd(current.id, { learnings: e.target.value })} />
-          <label className="perlbl">Verbatim</label>
-          <input placeholder="« citation clé… »" value={current.verbatim} onChange={(e) => upd(current.id, { verbatim: e.target.value })} />
-        </div>
       </div>
     );
   }
@@ -5546,6 +5620,7 @@ input.fname{flex:1;font-weight:500;}
 .otobadge{font-size:9px;letter-spacing:.14em;text-transform:uppercase;padding:3px 8px;border:1px solid var(--stone);color:var(--stone);border-radius:3px;white-space:nowrap;}
 .otobadge.arb{border-color:var(--gold);color:var(--gold-deep);}
 .otobadge.ris{background:var(--ink);border-color:var(--ink);color:var(--band-line);}
+.otobadge.learn{background:var(--emerald);border-color:var(--emerald);color:#fff;}
 .otobadge.oto{border-color:var(--gold);color:var(--gold-deep);margin-right:8px;}
 .otobadge.unread{background:var(--gold);border-color:var(--gold);color:#fff;margin-right:8px;}
 .otounread{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 28px;background:var(--band-faint);border-bottom:1px solid var(--band-line);}
