@@ -398,6 +398,12 @@ const COUNTED_KEYS = GROUPS.filter((g) => !g.later).flatMap((g) => g.keys);
 
 const STATUS = { todo: "À faire", doing: "En cours", done: "Validé" };
 const STATUS_WEIGHT = { todo: 0, doing: 0.5, done: 1 };
+const TODO_PRIO = {
+  haute:   { name: "Haute",   rank: 0, color: "#c9854a" },
+  moyenne: { name: "Moyenne", rank: 1, color: "#8b7355" },
+  basse:   { name: "Basse",   rank: 2, color: "#a99e86" },
+};
+const TODO_PRIO_NEXT = { haute: "moyenne", moyenne: "basse", basse: "haute" };
 const NOTION_SB_URL = "https://www.notion.so/358574051e758075b95def171df3ef09?v=358574051e75809b9094000c9fd2d3eb&source=copy_link";
 function isStarted(state, k) {
   return !!(state && state.touched && state.touched[k]);
@@ -1450,14 +1456,26 @@ function Overview({ state, pct, go, setStatus, addJournal, setTodos }) {
   const [capKind, setCapKind] = useState("note");
   const [capAt, setCapAt] = useState("");
   const [todoInput, setTodoInput] = useState("");
+  const [dragIdx, setDragIdx] = useState(null);
+  const [overIdx, setOverIdx] = useState(null);
   const todos = state.todos || [];
+  const prioOf = (p) => TODO_PRIO[p || "moyenne"] || TODO_PRIO.moyenne;
   const addTodo = () => {
     if (!todoInput.trim()) return;
-    setTodos([...todos, { id: Date.now(), text: todoInput.trim(), done: false }]);
+    setTodos([...todos, { id: Date.now(), text: todoInput.trim(), done: false, prio: "moyenne" }]);
     setTodoInput("");
   };
   const toggleTodo = (id) => setTodos(todos.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));
   const delTodo = (id) => setTodos(todos.filter((t) => t.id !== id));
+  const cyclePrio = (id) => setTodos(todos.map((t) => (t.id === id ? { ...t, prio: TODO_PRIO_NEXT[t.prio || "moyenne"] } : t)));
+  const moveTodo = (from, to) => {
+    if (from == null || to == null || from === to) return;
+    const arr = todos.slice();
+    const [m] = arr.splice(from, 1);
+    arr.splice(to, 0, m);
+    setTodos(arr);
+  };
+  const dropTodo = (to) => { moveTodo(dragIdx, to); setDragIdx(null); setOverIdx(null); };
   const submitCap = () => {
     if (!cap.trim()) return;
     const at = capKind === "jalon" ? dateInputToTs(capAt) : null;
@@ -1551,10 +1569,20 @@ function Overview({ state, pct, go, setStatus, addJournal, setTodos }) {
           <p className="empty">Aucune tâche. Ajoute ta première ci-dessus.</p>
         ) : (
           <ul className="todolist">
-            {todos.map((t) => (
-              <li className={"todoitem" + (t.done ? " done" : "")} key={t.id}>
+            {todos.map((t, i) => (
+              <li
+                className={"todoitem" + (t.done ? " done" : "") + (dragIdx === i ? " dragging" : "") + (overIdx === i && dragIdx !== null && dragIdx !== i ? " dragover" : "")}
+                key={t.id}
+                draggable
+                onDragStart={() => setDragIdx(i)}
+                onDragOver={(e) => { e.preventDefault(); if (overIdx !== i) setOverIdx(i); }}
+                onDrop={() => dropTodo(i)}
+                onDragEnd={() => { setDragIdx(null); setOverIdx(null); }}
+              >
+                <span className="todohandle" title="Glisser pour déplacer" aria-hidden="true">⠿</span>
                 <button className="todocheck" onClick={() => toggleTodo(t.id)} aria-label={t.done ? "Décocher" : "Cocher"}>{t.done ? "✓" : ""}</button>
                 <span className="todotext" onClick={() => toggleTodo(t.id)}>{t.text}</span>
+                <button className="todoprio" onClick={() => cyclePrio(t.id)} title="Priorité — clique pour changer" style={{ color: prioOf(t.prio).color, borderColor: prioOf(t.prio).color + "55", background: prioOf(t.prio).color + "14" }}>{prioOf(t.prio).name}</button>
                 <button className="del" onClick={() => delTodo(t.id)} aria-label="Supprimer">×</button>
               </li>
             ))}
@@ -2615,6 +2643,7 @@ function DiscoveryModule({ discovery, setDiscovery, hypotheses, setHypotheses })
 /* ---------------- Hypotheses ---------------- */
 function HypothesesModule({ items, setItems, problems = [], clusterFilter = "all" }) {
   const [filter, setFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
 
   const patch = (id, p) => setItems(items.map((h) => (h.id === id ? { ...h, ...p } : h)));
   const add = () =>
@@ -2640,7 +2669,9 @@ function HypothesesModule({ items, setItems, problems = [], clusterFilter = "all
   items.forEach((h) => { if (counts[h.status] !== undefined) counts[h.status]++; });
   const critItems = items.filter((h) => h.crit);
   const base = items.filter((h) => !h.crit && inCluster(h));
-  const shown = filter === "all" ? base : base.filter((h) => h.status === filter);
+  const shown = base
+    .filter((h) => filter === "all" || h.status === filter)
+    .filter((h) => typeFilter === "all" || h.type === typeFilter);
 
   const renderCard = (h) => {
     const typ = HYP_TYPE[h.type];
@@ -2828,8 +2859,14 @@ function HypothesesModule({ items, setItems, problems = [], clusterFilter = "all
         <button className="addrow" onClick={add}>+ Hypothèse</button>
       </div>
 
+      <div className="filterbar filterbar-type">
+        <button className={typeFilter === "all" ? "on" : ""} onClick={() => setTypeFilter("all")}>Tous types</button>
+        {Object.entries(HYP_TYPE).map(([k, v]) => (
+          <button key={k} className={typeFilter === k ? "on" : ""} onClick={() => setTypeFilter(k)} style={typeFilter === k ? { background: v.color, borderColor: v.color, color: "#fff" } : { color: v.color, borderColor: v.color + "55" }}>{v.name}</button>
+        ))}
+      </div>
       <div className="filterbar">
-        <button className={filter === "all" ? "on" : ""} onClick={() => setFilter("all")}>Toutes</button>
+        <button className={filter === "all" ? "on" : ""} onClick={() => setFilter("all")}>Tous statuts</button>
         {Object.entries(HYP_STATUS).map(([k, v]) => (
           <button key={k} className={filter === k ? "on" : ""} onClick={() => setFilter(k)}>{v.name}</button>
         ))}
@@ -5600,6 +5637,15 @@ input.fname{flex:1;font-weight:500;}
 .todoitem.done .todocheck{background:var(--emerald);border-color:var(--emerald);}
 .todotext{flex:1;font-size:14px;color:var(--ink);cursor:pointer;}
 .todoitem.done .todotext{text-decoration:line-through;color:var(--stone);}
+.todoprio{flex:none;font-size:11px;padding:3px 9px;border-radius:999px;border:1px solid;cursor:pointer;white-space:nowrap;font-family:inherit;font-weight:500;line-height:1;}
+.todoitem.done .todoprio{opacity:.45;}
+.todohandle{flex:none;color:var(--band-line);cursor:grab;font-size:14px;line-height:1;user-select:none;padding:0 2px;}
+.todohandle:active{cursor:grabbing;}
+.todoitem{transition:border-color .12s,background .12s,opacity .12s;}
+.todoitem.dragging{opacity:.4;}
+.todoitem.dragover{border-color:var(--gold);border-style:dashed;background:var(--band-faint);}
+.filterbar-type{margin:18px 0 8px;}
+.filterbar-type + .filterbar{margin-top:0;}
 .nextaction{margin:14px 0 0;font-size:13px;color:var(--ink);cursor:pointer;}
 .nextaction:hover{color:var(--gold-deep);}
 .nalabel{font-size:11px;letter-spacing:.06em;color:var(--stone);margin-right:6px;}
