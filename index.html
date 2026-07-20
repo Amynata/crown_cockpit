@@ -3861,6 +3861,62 @@ function AffinityBoard({ state, setAffinity, setDiscovery }) {
   );
 }
 
+function hrefOf(url) {
+  const u = String(url || "").trim();
+  return /^https?:\/\//i.test(u) ? u : ("https://" + u);
+}
+function domainOf(url) {
+  try { return new URL(hrefOf(url)).hostname.replace(/^www\./, ""); } catch (e) { return "lien"; }
+}
+function linkLabelFrom(url, label) {
+  if (label && label.trim()) return label.trim();
+  const u = hrefOf(url);
+  let host;
+  try { host = new URL(u).hostname.replace(/^www\./, ""); } catch (e) { return String(url || "").trim() || "Lien"; }
+  if (/instagram\.com/.test(host)) return "Instagram";
+  if (/facebook\.com/.test(host)) return "Facebook";
+  if (/tiktok\.com/.test(host)) return "TikTok";
+  if (/linkedin\.com/.test(host)) return "LinkedIn";
+  if (/goo\.gl/.test(host)) return "Maps";
+  if (/google\./.test(host) && /maps/i.test(u)) return "Maps";
+  return host;
+}
+
+function LinkStrip({ links, onChange }) {
+  const list = Array.isArray(links) ? links : [];
+  const [adding, setAdding] = useState(false);
+  const [label, setLabel] = useState("");
+  const [url, setUrl] = useState("");
+  const commit = () => {
+    const u = url.trim();
+    if (!u) return;
+    onChange([...list, { label: label.trim(), url: u }]);
+    setLabel(""); setUrl(""); setAdding(false);
+  };
+  const cancel = () => { setLabel(""); setUrl(""); setAdding(false); };
+  const removeAt = (i) => onChange(list.filter((_, k) => k !== i));
+  return (
+    <div className="lnkstrip">
+      <span className="lnklbl">Liens</span>
+      {list.map((l, i) => (
+        <span className="lnkchip" key={i}>
+          <a href={hrefOf(l.url)} target="_blank" rel="noopener noreferrer">{linkLabelFrom(l.url, l.label)} ↗</a>
+          <button className="lnkx" onClick={() => removeAt(i)} aria-label="Retirer le lien">×</button>
+        </span>
+      ))}
+      {!adding && <button className="lnkadd" onClick={() => setAdding(true)}>+ lien</button>}
+      {adding && (
+        <span className="lnkaddform">
+          <input className="lnki lnki-lbl" placeholder="Label (facultatif)" value={label} onChange={(e) => setLabel(e.target.value)} />
+          <input className="lnki lnki-url" placeholder="https://…" value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => e.key === "Enter" && commit()} />
+          <button className="lnkok" onClick={commit}>Ajouter</button>
+          <button className="lnkcancel" onClick={cancel}>Annuler</button>
+        </span>
+      )}
+    </div>
+  );
+}
+
 function InterviewsView({ state, setInterviews, setAffinity, setDiscovery }) {
   const [tab, setTab] = useState("liste");
   const [crOpenId, setCrOpenId] = useState(null);
@@ -3872,14 +3928,14 @@ function InterviewsView({ state, setInterviews, setAffinity, setDiscovery }) {
   }, [crOpenId]);
   const interviews = state.interviews || [];
   const segNames = ((state.segper && state.segper.segments) || []).map((s) => s.name).filter(Boolean);
-  const blankItw = (status) => ({ id: Date.now(), ts: Date.now(), date: formatDateShort(Date.now()), person: "", segment: "", status, learnings: "", verbatim: "", report: "", sourceUrl: "", unread: false });
+  const blankItw = (status) => ({ id: Date.now(), ts: Date.now(), date: formatDateShort(Date.now()), person: "", role: "", segment: "", status, learnings: "", verbatim: "", report: "", sourceUrl: "", links: [], unread: false });
   const add = () => setInterviews([blankItw("todo"), ...interviews]);
   const addCR = () => { const m = blankItw("done"); setInterviews([m, ...interviews]); setCrOpenId(m.id); };
   const upd = (id, p) => setInterviews(interviews.map((m) => (m.id === id ? { ...m, ...p } : m)));
   const del = (id) => setInterviews(interviews.filter((m) => m.id !== id));
   const closeCR = () => {
     const m = interviews.find((x) => x.id === crOpenId);
-    const empty = m && !["report", "person", "learnings", "verbatim", "sourceUrl"].some((k) => String(m[k] || "").trim());
+    const empty = m && !["report", "person", "learnings", "verbatim", "sourceUrl"].some((k) => String(m[k] || "").trim()) && !(Array.isArray(m.links) && m.links.length);
     if (empty) del(m.id);
     setCrOpenId(null);
   };
@@ -3926,6 +3982,8 @@ function InterviewsView({ state, setInterviews, setAffinity, setDiscovery }) {
                   {INTERVIEW_STATUS.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
                 </select>
               </div>
+              <label className="perlbl">Profil</label>
+              <input placeholder="ex. formatrice depuis 10 ans" value={current.role || ""} onChange={(e) => upd(current.id, { role: e.target.value })} />
               <label className="perlbl">Compte-rendu</label>
               <NotesEditor value={current.report} onChange={(v) => upd(current.id, { report: v })} rows={6} placeholder="Compte-rendu de l'entretien… (## Titre, **gras**, - puce)" variant="note" />
               <label className="perlbl">Lien Notion</label>
@@ -3937,6 +3995,8 @@ function InterviewsView({ state, setInterviews, setAffinity, setDiscovery }) {
               <textarea rows={3} placeholder="Ce que tu as appris…" value={current.learnings} onChange={(e) => upd(current.id, { learnings: e.target.value })} />
               <label className="perlbl">Verbatim</label>
               <input placeholder="« citation clé… »" value={current.verbatim} onChange={(e) => upd(current.id, { verbatim: e.target.value })} />
+              <label className="perlbl">Liens</label>
+              <LinkStrip links={current.links || []} onChange={(v) => upd(current.id, { links: v })} />
             </div>
           </>
         ) : !hasAny ? (
@@ -3950,6 +4010,7 @@ function InterviewsView({ state, setInterviews, setAffinity, setDiscovery }) {
                   {current.person || "Compte-rendu"}
                   {statusLabel && <span className="otobadge" style={{ marginLeft: 10 }}>{statusLabel}</span>}
                 </div>
+                {String(current.role || "").trim() && <div className="otosub">{current.role}</div>}
               </div>
               <div className="otometa">{current.date}{current.segment ? " · " + current.segment : ""}</div>
             </div>
@@ -3994,6 +4055,17 @@ function InterviewsView({ state, setInterviews, setAffinity, setDiscovery }) {
                   </div>
                   <a className="resdom" href={current.sourceUrl} target="_blank" rel="noopener noreferrer">→ Notion</a>
                 </div>
+              </OtoBlock>
+            )}
+
+            {Array.isArray(current.links) && current.links.length > 0 && (
+              <OtoBlock title="Liens">
+                {current.links.map((l, i) => (
+                  <div className="resline" key={i}>
+                    <div className="restxt"><span className="reslabel">{linkLabelFrom(l.url, l.label)}</span></div>
+                    <a className="resdom" href={hrefOf(l.url)} target="_blank" rel="noopener noreferrer">→ {domainOf(l.url)}</a>
+                  </div>
+                ))}
               </OtoBlock>
             )}
           </div>
@@ -4044,6 +4116,11 @@ function InterviewsView({ state, setInterviews, setAffinity, setDiscovery }) {
                   {INTERVIEW_STATUS.map((s) => <option key={s.code} value={s.code}>{s.label}</option>)}
                 </select>
                 <button className="del" onClick={() => del(m.id)} aria-label="Supprimer">×</button>
+                <div className="itwrolerow">
+                  <span className="lnklbl">Profil</span>
+                  <input className="itwrole" placeholder="ex. formatrice depuis 10 ans" value={m.role || ""} onChange={(e) => upd(m.id, { role: e.target.value })} />
+                </div>
+                <LinkStrip links={m.links || []} onChange={(v) => upd(m.id, { links: v })} />
               </div>
             ))}
           </div>
@@ -5751,6 +5828,21 @@ input.fname{flex:1;font-weight:500;}
 .suivirow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--card);border:1px solid var(--line);border-left:3px solid var(--band-line);border-radius:0 10px 10px 0;padding:8px 12px;}
 .suivirow.itw-planned{border-left-color:var(--gold);}
 .suivirow.itw-done{border-left-color:var(--emerald);}
+.lnkstrip{flex-basis:100%;display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:3px;}
+.lnklbl{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--stone);margin-right:2px;}
+.lnkchip{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;background:var(--band-faint);border:1px solid var(--band-line);border-radius:14px;padding:2px 4px 2px 10px;}
+.lnkchip a{color:var(--gold-deep);text-decoration:none;}
+.lnkx{width:15px;height:15px;border:none;border-radius:50%;font-size:12px;line-height:1;color:var(--stone);background:#0000000d;cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;}
+.lnkadd{font-size:11.5px;color:var(--stone);border:1px dashed var(--line);border-radius:14px;padding:3px 10px;background:transparent;cursor:pointer;}
+.lnkaddform{flex-basis:100%;display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;padding-top:8px;border-top:1px dashed var(--line);}
+.lnki{border:1px solid var(--line);border-radius:8px;background:var(--card);padding:5px 9px;font-family:inherit;font-size:12px;color:var(--ink);}
+.lnki-lbl{width:130px;}
+.lnki-url{flex:1;min-width:180px;}
+.lnkok{font-size:11.5px;color:#fff;background:var(--gold);border:1px solid var(--gold);border-radius:14px;padding:5px 12px;cursor:pointer;}
+.lnkcancel{font-size:11.5px;color:var(--stone);background:transparent;border:1px solid var(--line);border-radius:14px;padding:5px 12px;cursor:pointer;}
+.itwrolerow{flex-basis:100%;display:flex;align-items:center;gap:6px;margin-top:5px;}
+.itwrole{flex:1;min-width:150px;border:1px solid var(--line);border-radius:8px;background:var(--sand);padding:5px 9px;font-family:inherit;font-size:12px;font-style:italic;color:var(--ink);}
+.otosub{font-size:12.5px;color:var(--stone);font-style:italic;margin-top:6px;}
 .plusbtn{background:var(--ink);color:#fff;border:none;border-radius:50%;width:30px;height:30px;flex:none;font-size:17px;line-height:1;cursor:pointer;transition:.15s;}
 .plusbtn:hover{background:var(--gold-deep);}
 .crlist{display:flex;flex-direction:column;gap:8px;}
