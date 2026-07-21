@@ -1151,6 +1151,7 @@ function App() {
   const setStatus = (sec, val) => setState((p) => ({ ...p, status: { ...p.status, [sec]: val } }));
   const addJournal = (e) => setState((p) => ({ ...p, journal: [{ id: Date.now(), ts: Date.now(), ...e }, ...p.journal] }));
   const delJournal = (id) => setState((p) => ({ ...p, journal: p.journal.filter((x) => x.id !== id) }));
+  const editJournal = (id, patch) => setState((p) => ({ ...p, journal: p.journal.map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
   const setCap = (rows) => setState((p) => ({ ...p, captable: rows, touched: { ...p.touched, equipe: true } }));
   const setCrm = (rows) => setState((p) => ({ ...p, crm: rows, touched: { ...p.touched, levee: true } }));
   const setFinance = (fin) => setState((p) => ({ ...p, finance: fin, touched: { ...p.touched, finances: true } }));
@@ -1301,7 +1302,7 @@ function App() {
           {active === "overview" ? (
             <Overview state={state} pct={pct} go={go} setStatus={setStatus} addJournal={addJournal} setTodos={setTodos} />
           ) : active === "journal" ? (
-            <JournalView state={state} addJournal={addJournal} delJournal={delJournal} />
+            <JournalView state={state} addJournal={addJournal} delJournal={delJournal} editJournal={editJournal} />
           ) : active === "meetings" ? (
             <MeetingsView state={state} setMeetings={setMeetings} inboxMsg={inboxMsg} clearInbox={() => setInboxMsg(null)} />
           ) : active === "interviews" ? (
@@ -1329,6 +1330,7 @@ function App() {
               setTsom={setTsom}
               addJournal={addJournal}
               delJournal={delJournal}
+              editJournal={editJournal}
             />
           )}
         </main>
@@ -1838,7 +1840,7 @@ function SectionExport({ k, state }) {
   );
 }
 
-function SectionView({ k, state, setField, setStatus, setCap, setCrm, setFinance, setRoadmap, setCompetitors, setHypotheses, setDiscovery, setBmc, setPricing, setProduit, setTech, setSegper, setTsom, addJournal, delJournal }) {
+function SectionView({ k, state, setField, setStatus, setCap, setCrm, setFinance, setRoadmap, setCompetitors, setHypotheses, setDiscovery, setBmc, setPricing, setProduit, setTech, setSegper, setTsom, addJournal, delJournal, editJournal }) {
   const s = SECTIONS[k];
   const started = isStarted(state, k);
   const entries = state.journal.filter((e) => e.section === k);
@@ -1910,7 +1912,7 @@ function SectionView({ k, state, setField, setStatus, setCap, setCrm, setFinance
       {s.type === "segper" && <SegperModule data={state.segper || {}} setData={setSegper} />}
       {s.type === "tech" && <TechModule data={state.tech || {}} setData={setTech} />}
 
-      <MiniJournal sectionKey={k} entries={entries} addJournal={addJournal} delJournal={delJournal} />
+      <MiniJournal sectionKey={k} entries={entries} addJournal={addJournal} delJournal={delJournal} editJournal={editJournal} />
     </div>
   );
 }
@@ -3519,9 +3521,28 @@ function CrmTable({ rows, setRows }) {
 }
 
 /* ---------------- Journals ---------------- */
-function MiniJournal({ sectionKey, entries, addJournal, delJournal }) {
+function fmtWrap(el, value, onChange, before, after) {
+  const v = value || "";
+  if (!el) { onChange(v + before + after); return; }
+  const s = el.selectionStart, e = el.selectionEnd;
+  const sel = v.slice(s, e) || "texte";
+  onChange(v.slice(0, s) + before + sel + after + v.slice(e));
+  requestAnimationFrame(() => {
+    try { el.focus(); el.selectionStart = s + before.length; el.selectionEnd = s + before.length + sel.length; } catch (err) {}
+  });
+}
+function FmtBar({ taRef, value, onChange }) {
+  return (
+    <div className="fmtbar">
+      <button type="button" title="Gras" onClick={() => fmtWrap(taRef.current, value, onChange, "**", "**")}><b>G</b> Gras</button>
+      <button type="button" title="Surligner" onClick={() => fmtWrap(taRef.current, value, onChange, "==", "==")}><span className="fmtsw" /> Surligner</button>
+    </div>
+  );
+}
+function MiniJournal({ sectionKey, entries, addJournal, delJournal, editJournal }) {
   const [text, setText] = useState("");
   const [kind, setKind] = useState("note");
+  const taRef = useRef(null);
   const submit = () => {
     if (!text.trim()) return;
     addJournal({ section: sectionKey, kind, text: text.trim() });
@@ -3531,14 +3552,18 @@ function MiniJournal({ sectionKey, entries, addJournal, delJournal }) {
     <div className="block minijournal">
       <div className="blockhead"><h3>Journal de cette section</h3></div>
       <div className="entryinput">
-        <div className="kindtoggle">
-          <button className={kind === "note" ? "on" : ""} onClick={() => setKind("note")}>Note</button>
-          <button className={kind === "jalon" ? "on jalon" : "jalon"} onClick={() => setKind("jalon")}>Jalon</button>
+        <div className="toolsrow">
+          <div className="kindtoggle">
+            <button className={kind === "note" ? "on" : ""} onClick={() => setKind("note")}>Note</button>
+            <button className={kind === "jalon" ? "on jalon" : "jalon"} onClick={() => setKind("jalon")}>Jalon</button>
+          </div>
+          <FmtBar taRef={taRef} value={text} onChange={setText} />
         </div>
-        <textarea rows={2} placeholder={kind === "jalon" ? "Un cap franchi ? Note-le comme jalon." : "Une pensée, un blocage, une avancée…"} value={text} onChange={(e) => setText(e.target.value)} />
+        <textarea ref={taRef} rows={2} placeholder={kind === "jalon" ? "Un cap franchi ? Note-le comme jalon." : "Une pensée, un blocage, une avancée…"} value={text} onChange={(e) => setText(e.target.value)} />
+        <div className="hintsyntax">Astuce : <code>**gras**</code> et <code>==surligné==</code> fonctionnent aussi à la main.</div>
         <button className="addbtn" onClick={submit}>Ajouter</button>
       </div>
-      <EntryList entries={entries} delJournal={delJournal} showSection={false} />
+      <EntryList entries={entries} delJournal={delJournal} editJournal={editJournal} showSection={false} />
     </div>
   );
 }
@@ -4156,10 +4181,16 @@ function InterviewsView({ state, setInterviews, setAffinity, setDiscovery }) {
   );
 }
 
+function mdEsc(s) { return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+function mdInline(t) {
+  return t
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/==(.+?)==/g, "<mark>$1</mark>")
+    .replace(/_(.+?)_/g, "<em>$1</em>");
+}
 function mdToHtml(src) {
-  const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const inline = (t) =>
-    t.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/_(.+?)_/g, "<em>$1</em>");
+  const esc = mdEsc;
+  const inline = mdInline;
   const lines = esc(src || "").split("\n");
   let html = "", inList = false;
   for (const line of lines) {
@@ -4211,6 +4242,7 @@ function NotesEditor({ value, onChange, rows = 5, placeholder, variant = "note" 
           <>
             <button type="button" onClick={() => prefixLines("## ")} title="Titre">Titre</button>
             <button type="button" onClick={() => wrapInline("**", "**")} title="Gras"><b>G</b></button>
+            <button type="button" onClick={() => wrapInline("==", "==")} title="Surligner"><span className="fmtsw" /></button>
             <button type="button" onClick={() => prefixLines("- ")} title="Puce">• Puce</button>
           </>
         )}
@@ -4643,12 +4675,13 @@ function MeetingsView({ state, setMeetings, inboxMsg, clearInbox }) {
   );
 }
 
-function JournalView({ state, addJournal, delJournal }) {
+function JournalView({ state, addJournal, delJournal, editJournal }) {
   const [text, setText] = useState("");
   const [kind, setKind] = useState("note");
   const [jAt, setJAt] = useState("");
   const [sec, setSec] = useState("general");
   const [filter, setFilter] = useState("all");
+  const taRef = useRef(null);
   const submit = () => {
     if (!text.trim()) return;
     const at = kind === "jalon" ? dateInputToTs(jAt) : null;
@@ -4676,8 +4709,10 @@ function JournalView({ state, addJournal, delJournal }) {
               <option value="general">Général</option>
               {ALL_KEYS.map((k) => <option key={k} value={k}>{SECTIONS[k].label}</option>)}
             </select>
+            <FmtBar taRef={taRef} value={text} onChange={setText} />
           </div>
-          <textarea rows={3} placeholder="Qu’est-ce qui a bougé aujourd’hui ?" value={text} onChange={(e) => setText(e.target.value)} />
+          <textarea ref={taRef} rows={3} placeholder="Qu’est-ce qui a bougé aujourd’hui ?" value={text} onChange={(e) => setText(e.target.value)} />
+          <div className="hintsyntax">Astuce : <code>**gras**</code> et <code>==surligné==</code> fonctionnent aussi à la main.</div>
           <button className="addbtn" onClick={submit}>Ajouter au journal</button>
         </div>
       </div>
@@ -4688,18 +4723,23 @@ function JournalView({ state, addJournal, delJournal }) {
         {ALL_KEYS.map((k) => <button key={k} className={filter === k ? "on" : ""} onClick={() => setFilter(k)}>{SECTIONS[k].label}</button>)}
       </div>
 
-      <EntryList entries={entries} delJournal={delJournal} showSection={true} />
+      <EntryList entries={entries} delJournal={delJournal} editJournal={editJournal} showSection={true} />
     </div>
   );
 }
 
-function EntryList({ entries, delJournal, showSection }) {
+function EntryList({ entries, delJournal, editJournal, showSection }) {
+  const [editingId, setEditingId] = useState(null);
+  const [draft, setDraft] = useState("");
+  const editRef = useRef(null);
+  const startEdit = (e) => { setEditingId(e.id); setDraft(e.text || ""); };
+  const saveEdit = () => { if (!draft.trim()) return; if (editJournal) editJournal(editingId, { text: draft.trim() }); setEditingId(null); };
   if (!entries.length) return <p className="empty">Rien encore ici. La première entrée est toujours la plus dure — puis ça coule.</p>;
   const secLabel = (k) => (k === "general" ? "Général" : (SECTIONS[k] || {}).label || k);
   return (
     <ul className="entries">
       {entries.map((e) => (
-        <li className={"entry " + (e.kind === "jalon" ? "isjalon" : "")} key={e.id}>
+        <li className={"entry " + (e.kind === "jalon" ? "isjalon" : "") + (editingId === e.id ? " editing" : "")} key={e.id}>
           <div className="entrymeta">
             <time>{formatDate(e.ts)}</time>
             {e.kind === "jalon" && <span className="jalonbadge">Jalon</span>}
@@ -4710,8 +4750,24 @@ function EntryList({ entries, delJournal, showSection }) {
             )}
             {showSection && <span className="secbadge">{secLabel(e.section)}</span>}
           </div>
-          <p className="entrytext">{e.text}</p>
-          <button className="del entrydel" onClick={() => delJournal(e.id)} aria-label="Supprimer">×</button>
+          {editingId === e.id ? (
+            <div className="editbox">
+              <FmtBar taRef={editRef} value={draft} onChange={setDraft} />
+              <textarea ref={editRef} rows={3} value={draft} onChange={(ev) => setDraft(ev.target.value)} />
+              <div className="editactions">
+                <button className="savebtn" onClick={saveEdit} disabled={!draft.trim()}>Enregistrer</button>
+                <button className="cancelbtn" onClick={() => setEditingId(null)}>Annuler</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className="entrytext" dangerouslySetInnerHTML={{ __html: mdInline(mdEsc(e.text)) }} />
+              <div className="entryactions">
+                <button className="iconbtn" onClick={() => startEdit(e)} aria-label="Modifier">✎</button>
+                <button className="iconbtn" onClick={() => delJournal(e.id)} aria-label="Supprimer">×</button>
+              </div>
+            </>
+          )}
         </li>
       ))}
     </ul>
@@ -5001,6 +5057,7 @@ function StyleTag() {
   --sand:#f2ece0; --sand-2:#e9ddc7; --card:#fdfbf4; --line:#e0d4be;
   --band-faint:#ece0c9; --band-line:#d4b896;
   --emerald:#2d7a5f; --stone:#8b7355; --danger:#b5462a;
+  --hl:rgba(201,133,74,.28);
   font-family:'DM Sans',system-ui,sans-serif; color:var(--ink);
   background:var(--sand);
   min-height:100vh; line-height:1.5; -webkit-font-smoothing:antialiased;
@@ -5238,7 +5295,8 @@ textarea:focus,input:focus,select:focus{outline:none;border-color:var(--plum);bo
 .filterbar button.on{background:var(--ink);color:#fff;border-color:var(--ink);}
 
 .entries{list-style:none;margin:12px 0 0;padding:0;display:flex;flex-direction:column;gap:10px;}
-.entry{position:relative;background:var(--card);border:1px solid var(--line);border-left:3px solid var(--stone);border-radius:0 12px 12px 0;padding:12px 40px 12px 14px;}
+.entry{position:relative;background:var(--card);border:1px solid var(--line);border-left:3px solid var(--stone);border-radius:0 12px 12px 0;padding:12px 72px 12px 14px;}
+.entry.editing{padding-right:14px;border-left-color:var(--gold);}
 .entry.isjalon{border-left-color:var(--gold);background:linear-gradient(180deg,#fffaf0,#fff6e6);}
 .entrymeta{display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;}
 .entrymeta time{font-family:'DM Sans',sans-serif;font-size:11px;color:var(--ink-soft);}
@@ -5246,6 +5304,25 @@ textarea:focus,input:focus,select:focus{outline:none;border-color:var(--plum);bo
 .secbadge{font-size:11px;color:var(--plum);background:var(--sand-2);padding:2px 8px;border-radius:999px;}
 .entrytext{margin:0;font-size:14px;color:var(--ink);white-space:pre-wrap;}
 .entrydel{position:absolute;top:10px;right:10px;width:26px;height:26px;font-size:16px;}
+.entrytext strong{font-weight:600;}
+.entrytext em{font-style:italic;}
+mark{background:var(--hl);color:var(--ink);padding:0 3px;border-radius:3px;}
+.toolsrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.fmtbar{display:inline-flex;gap:4px;border:1px solid var(--line);border-radius:999px;padding:3px;background:var(--card);}
+.fmtbar button{border:none;background:transparent;border-radius:999px;padding:5px 12px;font-size:12.5px;color:var(--ink-soft);cursor:pointer;display:inline-flex;align-items:center;gap:6px;}
+.fmtbar button:hover{background:var(--band-faint);color:var(--ink);}
+.fmtsw{display:inline-block;width:12px;height:12px;border-radius:3px;background:var(--hl);border:1px solid var(--band-line);}
+.hintsyntax{font-size:11.5px;color:var(--stone);}
+.hintsyntax code{background:var(--band-faint);border:1px solid var(--band-line);border-radius:4px;padding:0 5px;}
+.entryactions{position:absolute;top:10px;right:10px;display:flex;gap:6px;}
+.iconbtn{width:26px;height:26px;font-size:14px;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--ink-soft);display:flex;align-items:center;justify-content:center;cursor:pointer;}
+.iconbtn:hover{background:var(--band-faint);color:var(--ink);}
+.editbox{display:flex;flex-direction:column;gap:9px;margin-top:4px;}
+.editbox textarea{border:1px solid var(--line);border-radius:10px;background:var(--sand);padding:10px 12px;font-family:inherit;font-size:14px;color:var(--ink);resize:vertical;}
+.editactions{display:flex;gap:8px;}
+.savebtn{background:var(--ink);color:#fff;border:none;border-radius:9px;padding:7px 16px;font-size:13px;font-weight:500;cursor:pointer;}
+.savebtn:disabled{opacity:.5;cursor:default;}
+.cancelbtn{background:transparent;color:var(--stone);border:1px solid var(--line);border-radius:9px;padding:7px 16px;font-size:13px;cursor:pointer;}
 .empty{color:var(--ink-soft);font-style:italic;font-size:14px;padding:8px 0;}
 
 /* roadmap */
